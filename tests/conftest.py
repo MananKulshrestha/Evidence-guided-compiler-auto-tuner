@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from autotuner import api, calibration, config, report, service, storage
+from autotuner import api, calibration, config, inspection, report, service, storage
 
 
 @pytest.fixture(autouse=True)
@@ -18,7 +18,7 @@ def isolated_data(tmp_path, monkeypatch):
     directory = tmp_path / "data"
     runs = directory / "runs"
     monkeypatch.setenv("AUTOTUNER_DATA_DIR", str(directory))
-    for module in (config, calibration, service):
+    for module in (config, calibration, inspection, service):
         monkeypatch.setattr(module, "DATA_DIR", directory)
     for module in (config, api, report, service):
         monkeypatch.setattr(module, "RUNS_DIR", runs)

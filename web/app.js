@@ -12,7 +12,10 @@ async function getJSON(url, options = {}) {
     }
     return value;
   });
-  if (!response.ok) throw new Error(data.error?.message || `HTTP ${response.status}`);
+  if (!response.ok) {
+    const diagnostics = data.error?.details?.diagnostics;
+    throw new Error((data.error?.message || `HTTP ${response.status}`) + (diagnostics ? `\n\n${diagnostics}` : ""));
+  }
   return data;
 }
 
@@ -48,6 +51,7 @@ async function loadSetup() {
     if (llm.error) $("health").title += `; ${llm.error}`;
   }
   $("run-button").disabled = !health.toolchain_ready;
+  $("inspect-button").disabled = !health.toolchain_ready;
   state.benchmarks = benchmarks.items;
   for (const item of benchmarks.items) {
     const option = document.createElement("option"); option.value = item.id; option.textContent = item.display_name;
@@ -264,4 +268,81 @@ $("retry-run").addEventListener("click", async () => {
   catch (error) { showError(error.message); }
   finally { $("retry-run").disabled = false; }
 });
+const inspectionExample = `int sum_positive(const int *values, int count) {
+    int total = 0;
+    for (int i = 0; i < count; ++i) {
+        int value = values[i];
+        int doubled = value * 2;
+        if (value > 0) {
+            total += doubled + 0;
+        }
+    }
+    return total;
+}
+`;
+let inspectionDownloadURL = null;
+function inspectionError(message) {
+  $("inspection-error").textContent = message;
+  $("inspection-error").hidden = false;
+}
+function clearInspection() {
+  $("inspection-results").hidden = true;
+  $("inspection-error").hidden = true;
+  if (inspectionDownloadURL) { URL.revokeObjectURL(inspectionDownloadURL); inspectionDownloadURL = null; }
+}
+$("source-code").addEventListener("input", clearInspection);
+$("load-code-example").addEventListener("click", () => {
+  clearInspection(); $("source-code").value = inspectionExample; $("source-file").value = "";
+});
+$("source-file").addEventListener("change", async () => {
+  clearInspection();
+  const file = $("source-file").files[0];
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith(".c") || file.size > 65536) { inspectionError("Choose a single .c file no larger than 64 KiB."); return; }
+  try { $("source-code").value = await file.text(); }
+  catch (_error) { inspectionError("Could not read the selected file."); }
+});
+$("inspection-form").addEventListener("submit", async (event) => {
+  event.preventDefault(); clearInspection();
+  const source = $("source-code").value;
+  if (!source.trim() || new TextEncoder().encode(source).length > 65536) { inspectionError("Paste non-empty C source no larger than 64 KiB."); return; }
+  const controls = ["inspect-button", "source-code", "source-file", "load-code-example", "inspection-max-passes"];
+  controls.forEach((id) => { $(id).disabled = true; });
+  $("inspection-progress").hidden = false;
+  try {
+    const data = await getJSON("/v1/inspections", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source, max_passes: Number($("inspection-max-passes").value) }) });
+    renderInspection(data);
+  } catch (error) { inspectionError(error.message); }
+  finally { controls.forEach((id) => { $(id).disabled = false; }); $("inspection-progress").hidden = true; }
+});
+function renderInspection(data) {
+  const first = data.stages[0], last = data.stages[data.stages.length - 1];
+  $("inspection-notice").textContent = data.notice;
+  const selection = data.llm.mode === "openai" ? `${data.llm.model} · ${data.proposal.proposal_type}` : "Local feature-guided selection";
+  $("inspection-proposal").textContent = `${selection}: ${data.proposal.reason}`;
+  $("inspection-pipeline").textContent = `C → LLVM IR → mem2reg → ${data.proposal.action_ids.join(" → ")} → assembly`;
+  const metrics = $("inspection-metrics"); metrics.replaceChildren();
+  addMetric(metrics, "IR instructions before", first.features.instruction_count, "Approximate textual count");
+  addMetric(metrics, "IR instructions after", last.features.instruction_count, "A count change does not establish a speedup");
+  addMetric(metrics, "Suggested passes applied", data.proposal.action_ids.length, "LLVM verifier checked every transformation");
+  $("inspection-before").textContent = first.ir;
+  $("inspection-after").textContent = last.ir;
+  const stages = $("inspection-stages"); stages.replaceChildren();
+  data.stages.forEach((stage, index) => {
+    const details = document.createElement("details"), summary = document.createElement("summary");
+    summary.textContent = `${index + 1}. ${stage.title} · ${stage.features.instruction_count} instructions${stage.changed === null ? "" : stage.changed ? " · IR changed" : " · no IR change"}`;
+    const pipeline = document.createElement("p"); pipeline.className = "muted"; pipeline.textContent = stage.pipeline;
+    const counts = document.createElement("p"); counts.className = "note";
+    counts.textContent = `Loads: ${stage.features.loads} · Stores: ${stage.features.stores} · Conditional branches: ${stage.features.conditional_branches} · Phi nodes: ${stage.features.phi_nodes}`;
+    const code = document.createElement("pre"); code.textContent = index === 0 ? stage.ir : stage.diff || "No textual IR change. This pass found no applicable transformation at this stage.";
+    details.append(summary, pipeline, counts, code); stages.append(details);
+  });
+  $("inspection-assembly").textContent = data.assembly;
+  $("inspection-commands").textContent = JSON.stringify(data.commands, null, 2);
+  inspectionDownloadURL = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+  $("inspection-download").href = inspectionDownloadURL;
+  $("inspection-results").hidden = false;
+  $("inspection-results").scrollIntoView({ behavior: "smooth", block: "start" });
+}
 loadSetup().catch((error) => showError(error.message));

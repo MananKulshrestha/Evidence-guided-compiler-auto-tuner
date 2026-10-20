@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Evidence-Guided LLVM Pass Tuner</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/app.js" defer></script>
+  <link rel="stylesheet" href="/static/style.css?v=custom-code-1">
+  <script src="/static/app.js?v=custom-code-1" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -19,6 +19,31 @@
         <p class="eyebrow">COMPILER DESIGN · MEASURED EXPERIMENTS</p>
         <h1>Find the pass sequence<br><em>the evidence supports.</em></h1>
         <p>Inspect IR, propose a bounded LLVM pipeline, reject incorrect binaries, and compare fresh runtime measurements with a random search and Clang <code>-O3</code>.</p>
+      </section>
+
+      <section class="panel inspection-panel" aria-labelledby="inspection-title">
+        <div class="panel-heading"><span class="step">C</span><div><h2 id="inspection-title">Inspect your own C code</h2><p>See LLVM transformations without setting up a benchmark</p></div></div>
+        <p class="note">Paste a single C17 source file or load a .c file. A function is enough; no main, inputs, or expected output are required. You’ll see LLVM IR and assembly, rather than rewritten C. Only IR feature counts are sent to OpenAI.</p>
+        <form id="inspection-form">
+          <div class="inspection-tools"><label>Load a C file<input id="source-file" type="file" accept=".c,text/x-c,text/plain"></label><button id="load-code-example" class="text-button" type="button">Load example code</button></div>
+          <label for="source-code">C source</label>
+          <textarea id="source-code" rows="12" maxlength="65536" required spellcheck="false" placeholder="Paste your C code here…"></textarea>
+          <div class="inspection-tools"><label>Maximum suggested passes<select id="inspection-max-passes"><option>1</option><option>2</option><option>3</option><option selected>4</option></select></label><button id="inspect-button" type="submit">Inspect code →</button></div>
+        </form>
+        <p id="inspection-progress" class="muted" role="status" hidden>Compiling C → preparing IR → selecting passes → verifying each transformation…</p>
+        <div id="inspection-error" class="error" role="alert" hidden></div>
+        <section id="inspection-results" hidden aria-label="Code inspection results">
+          <h3>Compiler transformation trace</h3>
+          <p id="inspection-notice" class="note"></p>
+          <p id="inspection-proposal"></p>
+          <p id="inspection-pipeline" class="inspection-pipeline"></p>
+          <div id="inspection-metrics" class="metric-grid"></div>
+          <div class="inspection-ir-grid"><div><h3>Before: compiled LLVM IR</h3><pre id="inspection-before"></pre></div><div><h3>After: transformed LLVM IR</h3><pre id="inspection-after"></pre></div></div>
+          <div id="inspection-stages"></div>
+          <details><summary>Final x86-64 assembly (LLVM backend -O3)</summary><pre id="inspection-assembly"></pre></details>
+          <details><summary>Compiler commands used</summary><pre id="inspection-commands"></pre></details>
+          <div class="downloads"><a id="inspection-download" download="code-inspection.json">Download inspection JSON ↓</a></div>
+        </section>
       </section>
 
       <div class="layout">

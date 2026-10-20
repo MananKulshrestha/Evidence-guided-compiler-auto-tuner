@@ -10,6 +10,8 @@ The runtime is Ubuntu WSL, LLVM 21, and the existing compiler-autotuner virtual 
 
 ## First quick test
 
+To explore your own source, use **Inspect your own C code** above the benchmark form. Paste a function or load a `.c` file, then click **Inspect code**. Expand the individual transformation steps to see IR diffs, compare before/after IR and counts, inspect the generated assembly, or download the JSON trace. Try **Load example code** first. No `main`, runtime input, or expected output is required. Compiler diagnostics are shown for invalid C. This flow does not execute your code or measure performance.
+
 1. Open the app. The header should say `Toolchain ready · OpenAI: gpt-6-luna`.
 2. Choose **Integer dot product**, **Quick demo**, and budget **3**. Keep the benchmark's default size, seed, and repeat values.
 3. Click **Start experiment**. Progress should advance and finish as **completed**. The result is labeled `demo_only` because quick mode is a functional demonstration.
@@ -40,7 +42,7 @@ For timing comparisons, keep other heavy CPU workloads idle and use a consistent
 
 A healthy functional test completes, accepts only correctness-checked candidates for timing, preserves evidence and saved runs, and loads charts/downloads. Invalid candidates should be rejected. A performance win is desirable, but is not required for the tool to be functioning correctly.
 
-New guided experiments make paid OpenAI calls. Random candidates and viewing saved/bundled results do not. The UI supports the three built-in benchmarks; arbitrary C-file upload is not implemented.
+New guided experiments and OpenAI-guided code inspections make paid OpenAI calls. Random candidates and viewing saved/bundled results do not. Custom `.c` files are supported for compile-only inspection; timed comparisons still use the three built-in benchmarks.
 
 ## Starting again later
 

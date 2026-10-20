@@ -67,11 +67,26 @@ test('real browser, FastAPI worker, LLVM, saved evidence, cancel, and retry', { 
   if (process.env.AUTOTUNER_LIVE_OPENAI === '1') {
     assert.match(await page.locator('#health').textContent(), /OpenAI: gpt-6-luna/);
   }
+  // Inspect a function without main, runtime inputs, or expected output.
+  await page.getByRole('button', { name: 'Load example code' }).click();
+  await page.locator('#source-code').fill('int twice(int x) { int redundant = x + 0; return redundant * 2; }');
+  await page.getByRole('button', { name: 'Inspect code' }).click();
+  await page.locator('#inspection-results').waitFor({ state: 'visible', timeout: 90000 });
+  assert.match(await page.locator('#inspection-notice').innerText(), /not executed/);
+  assert.match(await page.locator('#inspection-before').textContent(), /define.*twice/);
+  assert.match(await page.locator('#inspection-after').textContent(), /define.*twice/);
+  assert.match(await page.locator('#inspection-assembly').textContent(), /twice:/);
+  assert.ok(await page.locator('#inspection-stages details').count() >= 3);
+  const inspectionDownload = await page.locator('#inspection-download').getAttribute('href');
+  const inspected = await page.evaluate(async url => (await fetch(url)).json(), inspectionDownload);
+  assert.equal(inspected.performance, 'not_measured');
+  assert.equal(inspected.executed, false);
+  assert.equal(await page.locator('#inspection-error').isVisible(), false);
   const completed = [];
   for (const name of ['dot', 'matmul', 'histogram']) {
     await page.locator('#benchmark').selectOption(name);
     await page.locator('#mode').selectOption('full');
-    if (!await page.locator('details').first().evaluate(element => element.open)) await page.getByText('Measurement settings', { exact: true }).click();
+    if (!await page.getByText('Measurement settings', { exact: true }).evaluate(element => element.parentElement.open)) await page.getByText('Measurement settings', { exact: true }).click();
     await page.locator('#budget').fill('2');
     await page.locator('#size').fill(name === 'matmul' ? '5' : '64');
     await page.locator('#repeat').fill('2');
