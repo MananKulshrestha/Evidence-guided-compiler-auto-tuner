@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Evidence-Guided LLVM Pass Tuner</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">{ }</span><span>LLVM <strong>Pass Tuner</strong></span></div>
+      <div class="top-links"><a href="/docs" target="_blank" rel="noreferrer">API docs ↗</a><span id="health" class="health">Checking toolchain…</span></div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <p class="eyebrow">COMPILER DESIGN · MEASURED EXPERIMENTS</p>
+        <h1>Find the pass sequence<br><em>the evidence supports.</em></h1>
+        <p>Inspect IR, propose a bounded LLVM pipeline, reject incorrect binaries, and compare fresh runtime measurements with a random search and Clang <code>-O3</code>.</p>
+      </section>
+
+      <div class="layout">
+        <section class="panel setup" aria-labelledby="setup-title">
+          <div class="panel-heading"><span class="step">01</span><div><h2 id="setup-title">Configure a run</h2><p>Built-in deterministic C benchmarks</p></div></div>
+          <form id="run-form">
+            <label>Benchmark<select id="benchmark" required></select></label>
+            <div id="benchmark-description" class="hint"></div>
+            <div class="field-row"><label>Mode<select id="mode"><option value="quick">Quick demo</option><option value="full">Full comparison</option></select></label><label>Budget per strategy<input id="budget" type="number" min="1" max="20" value="5" required></label></div>
+            <div class="field-row three"><label>Size<input id="size" type="number" min="1" required></label><label>Seed<input id="seed" type="number" min="0" max="9007199254740991" required></label><label>Repeat<input id="repeat" type="number" min="1" max="100" required></label></div>
+            <details><summary>Measurement settings</summary>
+              <div class="field-row three"><label>Max pass count<input id="max-length" type="number" min="1" max="4" value="4" required></label><label>Search repetitions<input id="search-repetitions" type="number" min="3" max="10" value="3" required></label><label>Confirmation rounds<input id="confirmation-rounds" type="number" min="3" max="15" value="3" required></label></div>
+              <div id="holdout-fields" hidden><p class="note">Held-out workload must differ from tuning. At least ten confirmation rounds are needed for a full win/loss label.</p><div class="field-row three"><label>Holdout size<input id="holdout-size" type="number" min="1"></label><label>Holdout seed<input id="holdout-seed" type="number" min="0" max="9007199254740991"></label><label>Holdout repeat<input id="holdout-repeat" type="number" min="1" max="100"></label></div></div>
+              <p class="note">Browser seeds are limited to exact JavaScript integers. The CLI and API support the full unsigned 64-bit range.</p>
+            </details>
+            <p class="note">Quick mode uses one guided search and is labeled demo-only. Full mode also runs an equal-budget random search and held-out confirmation.</p>
+            <button id="run-button" type="submit">Start experiment <span>→</span></button>
+          </form>
+          <div id="form-error" class="error" role="alert" hidden></div>
+        </section>
+
+        <section class="panel activity" aria-labelledby="activity-title">
+          <div class="panel-heading"><span class="step">02</span><div><h2 id="activity-title">Experiment status</h2><p>Live progress from persistent records</p></div></div>
+          <div id="empty-state" class="empty-state"><div class="orbit">↻</div><p>Choose a benchmark to start, or open a saved run below.</p></div>
+          <div id="run-status" hidden>
+            <div class="status-line"><span id="status-badge" class="badge">Queued</span><span id="run-id" class="run-id"></span></div>
+            <div class="progress"><div id="progress-fill"></div></div>
+            <p id="progress-text" class="muted"></p>
+            <div id="run-message" class="hint"></div>
+            <button id="cancel-run" class="text-button" type="button" hidden>Cancel experiment</button>
+            <button id="retry-run" class="text-button" type="button" hidden>Run again with the same settings</button>
+          </div>
+          <div class="saved-heading"><h3>Saved experiments</h3><button id="refresh-saved" class="text-button" type="button">Refresh</button></div>
+          <div id="saved-runs" class="saved-runs"><p class="muted">Loading…</p></div>
+          <button id="load-more-saved" class="text-button" type="button" hidden>Load more experiments</button>
+          <div class="saved-heading"><h3>Bundled full evidence</h3><span class="muted">Opens without LLVM</span></div>
+          <div id="bundled-runs" class="saved-runs"><p class="muted">Loading…</p></div>
+        </section>
+      </div>
+
+      <section id="results" class="results" hidden>
+        <div class="section-heading"><div><p class="eyebrow">03 · VERIFIED EVIDENCE</p><h2>What the compiler actually did</h2></div><span id="result-label" class="badge"></span></div>
+        <div id="result-note" class="result-note"></div>
+        <div id="metrics" class="metric-grid"></div>
+        <div id="comparison-panel" class="panel comparison-panel"><div id="comparisons"></div><details><summary>Interpretation and limitations</summary><div id="result-explanation"></div></details></div>
+        <div id="charts" class="chart-grid"><div class="panel chart-panel"><h3>Best search runtime</h3><img id="search-chart" alt="Best-so-far runtime by trial"></div><div class="panel chart-panel"><h3>Size versus runtime</h3><img id="pareto-chart" alt="Candidate executable size versus runtime"></div></div>
+        <div class="panel trials-panel"><div class="saved-heading"><div><h3>Candidate evidence trail</h3><p class="muted">Select a trial to inspect its commands, checksum checks, and raw samples.</p></div></div><div class="table-wrap"><table><thead><tr><th>#</th><th>Strategy</th><th>Pass actions</th><th>Status</th><th>Median</th><th>Size</th></tr></thead><tbody id="trial-rows"></tbody></table></div><div id="trial-detail" class="trial-detail" hidden></div></div>
+        <div id="downloads" class="downloads"><a id="summary-link">Summary JSON ↓</a><a id="trials-link">Trials CSV ↓</a><a id="samples-link">Samples CSV ↓</a><a id="environment-link">Environment JSON ↓</a></div>
+      </section>
+    </main>
+    <footer>Local experiment · LLVM 21 · No model-generated performance claims</footer>
+  </div>
+</body>
+</html>
