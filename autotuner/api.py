@@ -20,6 +20,7 @@ from .config import ROOT, RUNS_DIR, WEB
 from .models import ExperimentRequest
 from .llm import OpenAISettings
 from .service import TuningService
+from .inspection import InspectionError, inspect_source
 
 
 class WorkloadBody(BaseModel):
@@ -40,6 +41,14 @@ class ExperimentCreateBody(BaseModel):
     max_sequence_length: int | None = Field(default=None, ge=1, le=4)
     search_repetitions: int | None = Field(default=None, ge=3, le=10)
     confirmation_rounds: int | None = Field(default=None, ge=3, le=15)
+    llm_mode: Literal["auto", "off", "openai"] | None = None
+
+
+class InspectionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    source: str = Field(min_length=1, max_length=65536)
+    max_passes: int = Field(default=4, ge=1, le=4)
+    action_ids: list[str] | None = Field(default=None, min_length=1, max_length=4)
     llm_mode: Literal["auto", "off", "openai"] | None = None
 
 
@@ -70,6 +79,7 @@ def _worker(app: FastAPI) -> None:
 async def lifespan(app: FastAPI):
     app.state.service = TuningService(reconcile=True)
     app.state.jobs = queue.Queue(maxsize=1)
+    app.state.inspection_lock = threading.Lock()
     worker = threading.Thread(target=_worker, args=(app,), name="autotuner-worker", daemon=True)
     worker.start()
     app.state.closing = False
@@ -149,7 +159,12 @@ def create_experiment(body: ExperimentCreateBody, request: Request, response: Re
     data = body.model_dump(exclude_none=True)
     try:
         ExperimentRequest.parse(data)
-        experiment_id = service(request).create_experiment(data)
+        if not request.app.state.inspection_lock.acquire(blocking=False):
+            return error_response(409, "INSPECTION_IN_PROGRESS", "Wait for the code inspection to finish")
+        try:
+            experiment_id = service(request).create_experiment(data)
+        finally:
+            request.app.state.inspection_lock.release()
     except ValueError as exc:
         return error_response(422, "INVALID_REQUEST", str(exc))
     except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
@@ -191,7 +206,12 @@ def retry_experiment(experiment_id: UUID, request: Request, response: Response):
     if request.app.state.closing:
         return error_response(503, "SERVICE_STOPPING", "The service is shutting down")
     try:
-        new_id = service(request).retry_experiment(str(experiment_id))
+        if not request.app.state.inspection_lock.acquire(blocking=False):
+            return error_response(409, "INSPECTION_IN_PROGRESS", "Wait for the code inspection to finish")
+        try:
+            new_id = service(request).retry_experiment(str(experiment_id))
+        finally:
+            request.app.state.inspection_lock.release()
     except KeyError:
         return error_response(404, "NOT_FOUND", "Experiment not found")
     except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
@@ -200,6 +220,29 @@ def retry_experiment(experiment_id: UUID, request: Request, response: Response):
             return error_response(409, "RUN_IN_PROGRESS", "Wait for the active experiment to finish")
         return error_response(503, "TOOLCHAIN_UNAVAILABLE", message[:300])
     return enqueue_experiment(new_id, request, response)
+
+
+@app.post("/v1/inspections")
+def inspect_code(body: InspectionBody, request: Request):
+    if request.app.state.closing:
+        return error_response(503, "SERVICE_STOPPING", "The service is shutting down")
+    if not request.app.state.inspection_lock.acquire(blocking=False):
+        return error_response(409, "INSPECTION_IN_PROGRESS", "Wait for the current code inspection to finish")
+    try:
+        current = service(request).store.one("SELECT experiment_id FROM worker_slot WHERE singleton_id=1")
+        if current and current["experiment_id"]:
+            return error_response(409, "RUN_IN_PROGRESS", "Wait for the tuning experiment to finish before inspecting code")
+        readiness = service(request).preflight()
+        return inspect_source(body.source, service(request)._toolchain, readiness["catalog"],
+                              max_passes=body.max_passes, action_ids=body.action_ids, llm_mode=body.llm_mode)
+    except InspectionError as exc:
+        return error_response(exc.status_code, exc.code, str(exc), {"diagnostics": exc.diagnostics})
+    except ValueError as exc:
+        return error_response(422, "INVALID_REQUEST", str(exc))
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        return error_response(503, "INSPECTION_UNAVAILABLE", str(exc)[:500])
+    finally:
+        request.app.state.inspection_lock.release()
 
 
 @app.get("/v1/experiments/{experiment_id}")
