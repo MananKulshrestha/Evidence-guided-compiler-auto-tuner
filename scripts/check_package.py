@@ -51,7 +51,7 @@ def main():
         assert probe["bundles"] == 3 and probe["web"], probe
         for relative, digest in probe.pop("files").items():
             assert hashlib.sha256((root / relative).read_bytes()).hexdigest() == digest, relative
-        assert len(json.loads(run([python, "-m", "autotuner", "benchmarks"], cwd=stage, env=env))) == 3
+        assert len(json.loads(run([python, "-m", "autotuner", "benchmarks"], cwd=stage, env=env))) == 5
         doctor = json.loads(run([python, "-m", "autotuner", "doctor"], cwd=stage, env=env))
         tune = run([python, "-m", "autotuner", "tune", "--benchmark", "dot", "--budget", "1", "--size", "7", "--seed", "11", "--repeat", "2"], cwd=stage, env=env)
         summary = json.loads(tune[tune.index("{"):])

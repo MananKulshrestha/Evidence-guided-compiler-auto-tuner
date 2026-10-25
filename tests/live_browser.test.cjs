@@ -83,7 +83,7 @@ test('real browser, FastAPI worker, LLVM, saved evidence, cancel, and retry', { 
   assert.equal(inspected.executed, false);
   assert.equal(await page.locator('#inspection-error').isVisible(), false);
   const completed = [];
-  for (const name of ['dot', 'matmul', 'histogram']) {
+  for (const name of ['dot', 'matmul', 'histogram', 'pipeline', 'skew_histogram']) {
     await page.locator('#benchmark').selectOption(name);
     await page.locator('#mode').selectOption('full');
     if (!await page.getByText('Measurement settings', { exact: true }).evaluate(element => element.parentElement.open)) await page.getByText('Measurement settings', { exact: true }).click();

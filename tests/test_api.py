@@ -18,7 +18,7 @@ def test_api_contract_and_saved_experiment_access():
         assert client.get("/v1/health").json()["database"] == "ok"
         benchmarks = client.get("/v1/benchmarks")
         assert benchmarks.status_code == 200
-        assert {item["id"] for item in benchmarks.json()["items"]} == {"dot", "matmul", "histogram"}
+        assert {item["id"] for item in benchmarks.json()["items"]} == {"dot", "matmul", "histogram", "pipeline", "skew_histogram"}
         assert client.get("/v1/actions").status_code == 200
         paths = {path: methods for path, item in client.get("/openapi.json").json()["paths"].items() for methods in [set(item)] if path.startswith("/v1")}
         assert sum(len(methods) for methods in paths.values()) == 13

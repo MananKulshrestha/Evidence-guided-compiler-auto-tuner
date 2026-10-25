@@ -15,7 +15,7 @@ from autotuner.service import TuningService
 from autotuner.storage import Store
 
 
-@pytest.mark.parametrize("name", ["dot", "matmul", "histogram"])
+@pytest.mark.parametrize("name", ["dot", "matmul", "histogram", "pipeline", "skew_histogram"])
 @pytest.mark.parametrize("level", ["-O0", "-O3"])
 def test_c_oracle_boundaries_and_invalid_arguments(name, level, tmp_path, llvm):
     tc, _ = llvm
@@ -41,7 +41,7 @@ def test_c_oracle_boundaries_and_invalid_arguments(name, level, tmp_path, llvm):
         assert not result.stdout, args
 
 
-@pytest.mark.parametrize("name", ["dot", "matmul", "histogram"])
+@pytest.mark.parametrize("name", ["dot", "matmul", "histogram", "pipeline", "skew_histogram"])
 @pytest.mark.parametrize("mode", ["quick", "full"])
 @pytest.mark.parametrize("orchestrator", ["plain", "graph"])
 def test_real_pipeline_matrix(name, mode, orchestrator, tmp_path, monkeypatch, llvm):
@@ -120,7 +120,7 @@ def test_unknown_calibration_benchmark_is_rejected_before_any_build(monkeypatch)
         calibration.calibrate("misspelled-benchmark")
 
 
-@pytest.mark.parametrize("name", ["dot", "matmul", "histogram"])
+@pytest.mark.parametrize("name", ["dot", "matmul", "histogram", "pipeline", "skew_histogram"])
 def test_real_calibration_records_each_workload(name, llvm, monkeypatch):
     tc, _ = llvm
     entry = dict(benchmark(name))

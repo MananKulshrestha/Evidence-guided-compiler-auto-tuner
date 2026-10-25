@@ -54,11 +54,26 @@ def expected_small(benchmark_id: str, workload: Workload) -> str:
                 for j in range(n):
                     cell = sum(a[i * n + k] * b[k * n + j] for k in range(n)) & MASK
                     result = hash_u64(result, cell)
-    elif benchmark_id == "histogram":
+    elif benchmark_id == "pipeline":
+        a, b = [], []
+        for _ in range(n):
+            state, value = next_u64(state)
+            a.append(value & 1023)
+            state, value = next_u64(state)
+            b.append(value & 1023)
+        result = FNV_OFFSET
+        for r in range(workload.repeat):
+            a[r % n] ^= r + 1
+            stage = [3 * x + y for x, y in zip(a, b)]
+            total = sum(x * x + (x >> 7) for x in stage) & MASK
+            result = hash_u64(result, total)
+    elif benchmark_id in ("histogram", "skew_histogram"):
         values = []
         for _ in range(n):
             state, value = next_u64(state)
-            values.append(value & 0xFFFFFFFF)
+            raw = value & 0xFFFFFFFF
+            values.append(((raw | 1) if raw & 7 else (raw & ~1))
+                          if benchmark_id == "skew_histogram" else raw)
         result = FNV_OFFSET
         for r in range(workload.repeat):
             values[r % n] ^= r + 1

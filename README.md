@@ -1,6 +1,6 @@
 # Evidence-Guided LLVM Pass Tuner
 
-A local, correctness-checked experiment for choosing short LLVM optimization-pass sequences for three C17 programs. It compares an IR-guided search (OpenAI-assisted when configured, otherwise rule-based) with an equal-budget random search, an empty-action control, and direct `clang -O3`. The tool records failures and raw timing samples, then remeasures finalists on tuning and held-out workloads. A speedup is an observation, not a guarantee.
+A local, correctness-checked experiment for choosing short LLVM optimization-pass sequences for five C17 programs. It compares an IR-guided search (OpenAI-assisted when configured, otherwise rule-based) with an equal-budget random search, an empty-action control, and direct `clang -O3`. The tool records failures and raw timing samples, then remeasures finalists on tuning and held-out workloads. A speedup is an observation, not a guarantee.
 
 ## Requirements
 
@@ -46,7 +46,7 @@ python scripts/check_openai.py --workflows
 
 The live checker uses a disposable database and saves a safe summary in `test-results/openai-live.json`. Normal Python/browser regression tests stay offline. The exact model and reasoning level are saved with each experiment. GPT-6 Luna supports `none`, `low`, `medium`, `high`, `xhigh`, and `max` reasoning; see the [model documentation](https://developers.openai.com/api/docs/models/gpt-6-luna).
 
-The real-browser workflow can also explicitly use your key: set `AUTOTUNER_LIVE_OPENAI=1` when running `npm run test:live`. That opt-in uses credits for six guided proposals across the three benchmarks; leave it unset for the usual offline regression run.
+The real-browser workflow can also explicitly use your key: set `AUTOTUNER_LIVE_OPENAI=1` when running `npm run test:live`. That opt-in uses credits for ten guided proposals across the five benchmarks; leave it unset for the usual offline regression run.
 
 Keys stay on the Python server. Only IR feature counts, allowed passes, previously attempted sequences, and the guided strategy's measured history are sent to OpenAI. Source code and holdout results are not sent. OpenAI uses [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs); proposals still pass local allowlist, uniqueness, compilation, checksum, and timing checks. Incomplete/refused/invalid/repeated proposals fall back to local rules and are labeled `llm_fallback`. Provider failures stop the experiment with a safe error instead of silently treating local search as an LLM result. Each guided candidate makes at most one logical API request (with one transient retry); random search never calls OpenAI. The resolved mode and model are saved with each experiment; model outputs are not deterministic.
 
@@ -112,9 +112,15 @@ The API is `POST /v1/inspections`, with `source`, optional `max_passes` (1–4),
 {"source": "int twice(int x) { return (x + 0) * 2; }", "max_passes": 4}
 ```
 
-`dot`, `matmul`, and `histogram` accept `--size N --seed S --repeat R` and print exactly one `checksum:<16 lowercase hex digits>` line. The allowed size interval and quick/tuning/holdout defaults are listed by `benchmarks` and `/v1/benchmarks`. Small cases are checked against separate Python reference implementations. Larger workloads require exact agreement between `-O0`, direct `-O3`, and the empty-action binary before search. Every candidate and every timed execution must return the same checksum.
+`dot`, `matmul`, `histogram`, `pipeline`, and `skew_histogram` accept `--size N --seed S --repeat R` and print exactly one `checksum:<16 lowercase hex digits>` line. The allowed size interval and quick/tuning/holdout defaults are listed by `benchmarks` and `/v1/benchmarks`. Small cases are checked against separate Python reference implementations. Larger workloads require exact agreement between `-O0`, direct `-O3`, and the empty-action binary before search. Every candidate and every timed execution must return the same checksum.
 
 This version accepts only the built-in benchmarks. The HTTP service listens on `127.0.0.1` and has one worker, so concurrent experiments receive `409 RUN_IN_PROGRESS`. Do not expose the service on a public interface.
+
+The `pipeline` workload has adjacent producer and consumer loops over an intermediate array. It gives the `loop-fusion` action a concrete memory-traffic hypothesis. `skew_histogram` keeps the original histogram computation but generates inputs that favor the first branch, giving branch and control-flow passes a second distribution to evaluate. The catalog also includes `loop-interchange` for legal nested-loop reorderings. These are hypotheses to measure against direct `clang -O3`, not pre-established wins. The new workloads use different tuning and holdout seeds and sizes, and both have independent small-input Python oracles.
+
+To reproduce a focused comparison of hand-selected pass sequences against direct `clang -O3`, including ten alternating paired rounds on both inputs, run `python scripts/verify_added_cases.py`. It saves raw samples and build details in `test-results/added-cases.json`. This probe is separate from the normal guided/random search; its pass sequences are specified in the script.
+
+The [25 October added-case measurements](docs/ADDED_CASES_2026-10-25.md) include a `loop-fusion` pipeline speedup on tuning and held-out inputs. A full 20+20 candidate search also found a held-out win over direct `clang -O3`; guided versus random was inconclusive. The skewed-histogram result was effectively tied.
 
 The results page shows all five comparisons on tuning and held-out inputs, including median/MAD and faster paired rounds. Measurement settings and held-out inputs are editable under **Measurement settings**. The browser limits seeds to `9007199254740991` to preserve integer precision; the CLI/API accept the full unsigned 64-bit range. Failed, interrupted, and cancelled runs retain inspectable partial trials without a final performance claim.
 
@@ -133,7 +139,7 @@ python -m autotuner doctor
 
 Tests cover the independent C/Python oracle, malformed output, timeout cleanup, guided/random pipelines, confirmation filtering, startup cleanup, cancelled/retried work, restart identity, failed-command evidence, binary-independent reports, corrupt cache recovery, strict validation, and graph exhaustion.
 
-The extended suite tests all three benchmarks in quick/full mode with both plain and graph orchestration, unsigned seed boundaries, a 40-proposal guided/random search, injected compile/runtime/checksum failures, concurrent ownership, legacy migrations, CLI/export behavior, and unavailable tools. Every Python test uses a disposable data directory.
+The extended suite tests all five benchmarks in quick/full mode with both plain and graph orchestration, unsigned seed boundaries, a 40-proposal guided/random search, injected compile/runtime/checksum failures, concurrent ownership, legacy migrations, CLI/export behavior, and unavailable tools. Every Python test uses a disposable data directory.
 
 To measure Python statement/branch coverage:
 
@@ -151,7 +157,7 @@ npm test
 npm run test:live
 ```
 
-`npm test` checks UI edge cases with API fixtures. `npm run test:live` drives Chromium against the actual FastAPI worker and LLVM through a stdio ASGI adapter, including all three benchmarks, downloads, cancellation/retry, and saved runs. It uses no listening port. On Linux set `AUTOTUNER_TEST_PYTHON` to the project virtual environment's Python. On Windows the test defaults to the documented Ubuntu WSL environment; set `AUTOTUNER_TEST_PYTHON` and `AUTOTUNER_TEST_WSL_DISTRO` to override it. `BROWSER_EXECUTABLE` optionally selects an already installed Chromium executable.
+`npm test` checks UI edge cases with API fixtures. `npm run test:live` drives Chromium against the actual FastAPI worker and LLVM through a stdio ASGI adapter, including all five benchmarks, downloads, cancellation/retry, and saved runs. It uses no listening port. On Linux set `AUTOTUNER_TEST_PYTHON` to the project virtual environment's Python. On Windows the test defaults to the documented Ubuntu WSL environment; set `AUTOTUNER_TEST_PYTHON` and `AUTOTUNER_TEST_WSL_DISTRO` to override it. `BROWSER_EXECUTABLE` optionally selects an already installed Chromium executable.
 
 The separate clean-install check builds an sdist, builds a wheel from it, and tests the installed CLI/resources/exports in a fresh virtual environment:
 

@@ -25,6 +25,8 @@ ACTIONS = (
     Action("loop-vectorize", "Loop vectorization", "function(loop-vectorize)", "function", "Use SIMD operations where legal and profitable."),
     Action("licm", "Loop invariant code motion", "function(loop-mssa(licm))", "loop", "Move invariant work out of loops."),
     Action("slp-vectorizer", "SLP vectorization", "function(slp-vectorizer)", "function", "Pack independent scalar operations into vectors."),
+    Action("loop-fusion", "Loop fusion", "function(loop-fusion)", "function", "Fuse adjacent loops when dependences permit."),
+    Action("loop-interchange", "Loop interchange", "function(loop-interchange)", "function", "Change nested-loop order when legal and profitable."),
 )
 
 BY_ID = {action.id: action for action in ACTIONS}
