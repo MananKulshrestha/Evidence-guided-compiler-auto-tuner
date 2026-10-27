@@ -10,6 +10,7 @@ from .actions import BY_ID, compose
 from .config import DATA_DIR
 from .features import summarize_ir
 from .llm import OpenAIPolicy, OpenAISettings
+from .explanation import explain_inspection
 from .policies import GuidedPolicy, Proposal
 from .toolchain import Toolchain, execute
 
@@ -24,7 +25,8 @@ class InspectionError(Exception):
 
 
 def inspect_source(source: str, tc: Toolchain, catalog: dict, *, max_passes: int = 4,
-                   action_ids: list[str] | None = None, llm_mode: str | None = None) -> dict:
+                   action_ids: list[str] | None = None, llm_mode: str | None = None,
+                   explain: bool = False) -> dict:
     if not source.strip() or len(source.encode("utf-8")) > MAX_SOURCE_BYTES or "\x00" in source:
         raise ValueError("Provide non-empty single-file C source, at most 64 KiB, without NUL characters")
     if type(max_passes) is not int or not 1 <= max_passes <= 4:
@@ -101,11 +103,18 @@ def inspect_source(source: str, tc: Toolchain, catalog: dict, *, max_passes: int
                 "ASSEMBLY_FAILED", "LLVM could not generate assembly")
         if assembly_file.stat().st_size > MAX_IR_BYTES:
             raise InspectionError("ASSEMBLY_TOO_LARGE", "Generated assembly is too large for this view; inspect a smaller source file")
+        assembly = assembly_file.read_text(encoding="utf-8", errors="replace")
+        explanation = {"status": "disabled", "message": "Enable the GPT explanation to see readable code and a plain-language walkthrough."}
+        if explain:
+            if settings.resolve_mode(llm_mode) == "openai":
+                explanation = explain_inspection(source, stages, assembly, settings)
+            else:
+                explanation = {"status": "unavailable", "message": "A readable explanation requires OpenAI mode and a configured API key."}
         return {"status": "completed", "mode": "inspection", "executed": False,
                 "correctness": "not_tested", "performance": "not_measured",
                 "notice": "Compiler IR verification passed. Your program was not executed; output correctness and speed were not tested.",
                 "source": source, "proposal": asdict(proposal), "pipeline": compose(proposal.action_ids),
                 "llm": {"mode": mode, "model": settings.model if mode == "openai" else None,
                         "reasoning_effort": settings.reasoning_effort if mode == "openai" else None},
-                "stages": stages, "assembly": assembly_file.read_text(encoding="utf-8", errors="replace"),
+                "stages": stages, "assembly": assembly, "explanation": explanation,
                 "commands": commands}

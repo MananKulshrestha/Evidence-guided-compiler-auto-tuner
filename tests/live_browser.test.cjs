@@ -47,7 +47,7 @@ async function applicationBridge(t) {
   };
 }
 
-test('real browser, FastAPI worker, LLVM, saved evidence, cancel, and retry', { timeout: 180000 }, async t => {
+test('real browser, FastAPI worker, LLVM, saved evidence, cancel, and retry', { timeout: 360000 }, async t => {
   const bridge = await applicationBridge(t);
   const browser = await chromium.launch({ headless: true, executablePath: process.env.BROWSER_EXECUTABLE || undefined });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1050 } });
@@ -64,6 +64,17 @@ test('real browser, FastAPI worker, LLVM, saved evidence, cancel, and retry', { 
   });
   await page.goto('http://autotuner.test/');
   await page.waitForFunction(() => document.getElementById('health').textContent.startsWith('Toolchain ready'));
+  // A showcase button must execute its real full preset, with local guided rules.
+  await page.locator('.showcase-run').first().click();
+  await page.waitForFunction(() => document.getElementById('status-badge').textContent === 'completed', null, { timeout: 180000 });
+  await page.locator('#comparisons h3').filter({ hasText: 'Held-out' }).waitFor();
+  assert.equal(await page.locator('#trial-rows tr').count(), 40);
+  assert.equal(await page.locator('#comparisons tbody tr').count(), 10);
+  const showcaseId = await page.locator('#run-id').innerText();
+  const showcaseRun = await page.evaluate(async id => (await fetch(`/v1/experiments/${id}`)).json(), showcaseId);
+  assert.equal(showcaseRun.request.llm_mode, 'off');
+  assert.equal(showcaseRun.request.confirmation_rounds, 10);
+  assert.equal(showcaseRun.request.mode, 'full');
   if (process.env.AUTOTUNER_LIVE_OPENAI === '1') {
     assert.match(await page.locator('#health').textContent(), /OpenAI: gpt-6-luna/);
   }

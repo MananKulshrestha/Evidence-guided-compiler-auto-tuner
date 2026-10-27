@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const state = { benchmarks: [], activeId: null, poller: null, viewVersion: 0, detailVersion: 0, savedOffset: 0 };
+const state = { benchmarks: [], activeId: null, poller: null, viewVersion: 0, detailVersion: 0, savedOffset: 0, toolchainReady: false, showcaseSubmitting: false };
 const ms = (ns) => ns == null ? "—" : `${(ns / 1e6).toFixed(2)} ms`;
 
 async function getJSON(url, options = {}) {
@@ -51,6 +51,7 @@ async function loadSetup() {
     if (llm.error) $("health").title += `; ${llm.error}`;
   }
   $("run-button").disabled = !health.toolchain_ready;
+  state.toolchainReady = health.toolchain_ready;
   $("inspect-button").disabled = !health.toolchain_ready;
   state.benchmarks = benchmarks.items;
   for (const item of benchmarks.items) {
@@ -58,8 +59,115 @@ async function loadSetup() {
     $("benchmark").append(option);
   }
   applyDefaults();
-  await Promise.all([loadSaved().catch((error) => showError(error.message)), loadBundled()]);
+  await Promise.all([loadSaved().catch((error) => showError(error.message)), loadBundled(), loadShowcase()]);
 }
+
+const percent = (value) => `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+
+async function loadShowcase() {
+  const container = $("showcase-cases"); container.replaceChildren();
+  try {
+    const catalog = await getJSON("/examples/showcase/catalog.json");
+    $("showcase-selection").textContent = `${catalog.selection} Catalog generated ${new Date(catalog.generated_at).toLocaleString()}. Screened ${catalog.screened}; selected ${catalog.items.length}; excluded ${catalog.excluded}.`;
+    const reductions = catalog.items.map(item => item.comparisons.holdout.guided_vs_o3.runtime_reduction_percent);
+    const families = new Set(catalog.items.map(item => item.request.benchmark_id)).size;
+    const wins = catalog.items.filter(item => item.comparisons.holdout.guided_vs_o3.label === "win").length;
+    $("showcase-win-count").textContent = `${wins} confirmed held-out wins versus Clang -O3. A win requires ≥2% runtime reduction and faster execution in at least 80% of ten or more paired rounds. This is the engine's evidence rule, not a statistical significance test.`;
+    const stats = [["Selected workload cases", catalog.items.length, `${families} source programs; size and seed variants`],
+      ["Held-out reductions ≥ 2%", reductions.filter(value => value >= 2).length, "Descriptive count versus Clang -O3"],
+      ["Near equal / slightly worse", reductions.filter(value => value < 2).length, "Within the selected 2% regression limit"]];
+    $("showcase-stats").replaceChildren(...stats.map(([label, value, note]) => {
+      const box = document.createElement("div"); box.className = "metric";
+      const small = document.createElement("small"); small.textContent = label;
+      const strong = document.createElement("strong"); strong.textContent = value;
+      const span = document.createElement("span"); span.textContent = note;
+      box.append(small, strong, span); return box;
+    }));
+    for (const item of catalog.items) {
+      const card = document.createElement("article"); card.className = "showcase-case"; card.dataset.caseId = item.id;
+      card.dataset.o3Win = String(item.comparisons.holdout.guided_vs_o3.label === "win");
+      const title = document.createElement("h3"); title.textContent = item.title;
+      const reduction = item.comparisons.holdout.guided_vs_o3.runtime_reduction_percent;
+      const observation = document.createElement("p"); observation.className = "note";
+      observation.textContent = `Held-out evidence vs O3: ${item.comparisons.holdout.guided_vs_o3.label.toUpperCase()}. Median: ${reduction >= 10 ? "much faster (≥10% reduction)" : reduction >= 2 ? "faster (≥2% reduction)" : reduction > 0 ? "near equal, slightly faster" : reduction === 0 ? "equal" : "near equal, slightly slower"}.`;
+      const purpose = document.createElement("p"); purpose.className = "note"; purpose.textContent = item.purpose;
+      const tableWrap = document.createElement("div"); tableWrap.className = "table-wrap";
+      const table = document.createElement("table");
+      const header = document.createElement("thead"); const headerRow = document.createElement("tr");
+      for (const label of ["Input", "Clang -O3 median ± MAD", "Guided median ± MAD", "Reduction vs O3", "Faster pairs", "Evidence vs O3", "Reduction vs random"]) {
+        const cell = document.createElement("th"); cell.textContent = label; headerRow.append(cell);
+      }
+      header.append(headerRow); table.append(header);
+      const body = document.createElement("tbody");
+      for (const phase of ["tuning", "holdout"]) {
+        const comparison = item.comparisons[phase], result = comparison.guided_vs_o3;
+        const workload = item.request[`${phase}_input`];
+        const row = document.createElement("tr");
+        for (const value of [`${phase === "holdout" ? "Held-out" : "Tuning"}: ${workload.size.toLocaleString()} × ${workload.repeat}, seed ${workload.seed}`,
+          `${ms(result.comparator_median_ns)} ± ${ms(result.comparator_mad_ns)}`,
+          `${ms(result.candidate_median_ns)} ± ${ms(result.candidate_mad_ns)}`,
+          percent(result.runtime_reduction_percent), `${result.paired_wins}/${result.paired_rounds}`, result.label,
+          percent(comparison.guided_vs_random.runtime_reduction_percent)]) {
+          const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
+        }
+        body.append(row);
+      }
+      table.append(body); tableWrap.append(table);
+      const buttons = document.createElement("div"); buttons.className = "showcase-actions";
+      const evidence = document.createElement("button"); evidence.type = "button"; evidence.className = "text-button"; evidence.textContent = "Open measured evidence";
+      evidence.addEventListener("click", async () => {
+        const version = ++state.viewVersion; clearTimeout(state.poller); state.activeId = null;
+        $("results").hidden = true; $("cancel-run").hidden = true; $("retry-run").hidden = true;
+        try {
+          const base = `/examples/showcase/${item.id}`;
+          const bundle = await getJSON(`${base}/bundle.json`);
+          if (version !== state.viewVersion) return;
+          $("empty-state").hidden = true; $("run-status").hidden = false;
+          $("status-badge").textContent = "selected saved full"; $("status-badge").className = "badge";
+          $("run-id").textContent = item.experiment_id; $("progress-fill").style.width = "100%";
+          $("progress-text").textContent = `${bundle.summary.trial_count} previously measured candidate proposals`;
+          $("run-message").textContent = "Selected showcase evidence. No fresh benchmark process was started.";
+          renderResults(bundle.summary, bundle.trials, base, bundle.details);
+          $("results").scrollIntoView({ behavior: "smooth", block: "start" });
+        } catch (error) { if (version === state.viewVersion) showShowcaseError(error.message); }
+      });
+      const run = document.createElement("button"); run.type = "button"; run.className = "showcase-run"; run.textContent = "Run this test →";
+      run.disabled = !state.toolchainReady; run.title = state.toolchainReady ? "Fresh full search with these exact settings; uses local rules, no API credits" : "LLVM toolchain is unavailable";
+      run.addEventListener("click", async () => {
+        if (state.showcaseSubmitting) return;
+        state.showcaseSubmitting = true;
+        container.querySelectorAll(".showcase-run").forEach(button => { button.disabled = true; });
+        $("showcase-error").hidden = true;
+        try {
+          const data = await getJSON("/v1/experiments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(item.request) });
+          await watchRun(data.id);
+          $("run-status").scrollIntoView({ behavior: "smooth", block: "center" });
+        } catch (error) { showShowcaseError(error.message); }
+        finally {
+          state.showcaseSubmitting = false;
+          container.querySelectorAll(".showcase-run").forEach(button => { button.disabled = !state.toolchainReady; });
+        }
+      });
+      buttons.append(evidence, run); card.append(title, purpose, observation, tableWrap, buttons); container.append(card);
+    }
+    if (!catalog.items.length) container.textContent = "No measured cases currently meet the selection rule.";
+    applyShowcaseFilter();
+  } catch (error) {
+    $("showcase-selection").textContent = "Measured showcase is unavailable.";
+    showShowcaseError(error.message);
+  }
+}
+
+function showShowcaseError(message) {
+  $("showcase-error").textContent = message; $("showcase-error").hidden = false;
+}
+
+function applyShowcaseFilter() {
+  for (const card of $("showcase-cases").querySelectorAll(".showcase-case")) {
+    card.hidden = $("showcase-wins-only").checked && card.dataset.o3Win !== "true";
+  }
+}
+$("showcase-wins-only").addEventListener("change", applyShowcaseFilter);
 
 async function loadBundled() {
   const container = $("bundled-runs"); container.replaceChildren();
@@ -304,23 +412,29 @@ $("source-file").addEventListener("change", async () => {
 });
 $("inspection-form").addEventListener("submit", async (event) => {
   event.preventDefault(); clearInspection();
+  const quick = event.submitter?.value === "quick";
   const source = $("source-code").value;
   if (!source.trim() || new TextEncoder().encode(source).length > 65536) { inspectionError("Paste non-empty C source no larger than 64 KiB."); return; }
-  const controls = ["inspect-button", "source-code", "source-file", "load-code-example", "inspection-max-passes"];
+  const controls = ["inspect-button", "inspect-quick", "source-code", "source-file", "load-code-example", "inspection-max-passes", "inspection-explain"];
   controls.forEach((id) => { $(id).disabled = true; });
   $("inspection-progress").hidden = false;
+  $("inspection-progress").textContent = quick ? "Quick: compiling → one cleanup pass → assembly…" : "Compiling → selecting passes → verifying → preparing readable explanation…";
   try {
     const data = await getJSON("/v1/inspections", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source, max_passes: Number($("inspection-max-passes").value) }) });
+      body: JSON.stringify(quick ? { source, max_passes: 1, action_ids: ["instcombine"], llm_mode: "off", explain: false } :
+        { source, max_passes: Number($("inspection-max-passes").value), explain: $("inspection-explain").checked }) });
     renderInspection(data);
+    $("inspection-readable").hidden = quick;
+    $("inspection-raw").open = quick;
   } catch (error) { inspectionError(error.message); }
   finally { controls.forEach((id) => { $(id).disabled = false; }); $("inspection-progress").hidden = true; }
 });
 function renderInspection(data) {
   const first = data.stages[0], last = data.stages[data.stages.length - 1];
   $("inspection-notice").textContent = data.notice;
-  const selection = data.llm.mode === "openai" ? `${data.llm.model} · ${data.proposal.proposal_type}` : "Local feature-guided selection";
+  const selection = data.llm.mode === "openai" ? `${data.llm.model} · ${data.proposal.proposal_type}` : data.llm.mode === "manual" ? "Fixed local passes · no GPT selection" : "Local feature-guided selection";
   $("inspection-proposal").textContent = `${selection}: ${data.proposal.reason}`;
+  $("inspection-proposal").hidden = data.llm.mode === "manual";
   $("inspection-pipeline").textContent = `C → LLVM IR → mem2reg → ${data.proposal.action_ids.join(" → ")} → assembly`;
   const metrics = $("inspection-metrics"); metrics.replaceChildren();
   addMetric(metrics, "IR instructions before", first.features.instruction_count, "Approximate textual count");
@@ -328,15 +442,47 @@ function renderInspection(data) {
   addMetric(metrics, "Suggested passes applied", data.proposal.action_ids.length, "LLVM verifier checked every transformation");
   $("inspection-before").textContent = first.ir;
   $("inspection-after").textContent = last.ir;
+  const readable = $("inspection-readable"); readable.replaceChildren();
+  const explanation = data.explanation;
+  function paragraph(parent, text, tag = "p") {
+    const element = document.createElement(tag); element.textContent = text; parent.append(element);
+  }
+  if (explanation?.status === "completed") {
+    paragraph(readable, "Your code, explained", "h3");
+    paragraph(readable, explanation.original_behavior);
+    const comparison = document.createElement("div"); comparison.className = "inspection-ir-grid";
+    for (const [label, code] of [["Original C", data.source], [explanation.language === "c" ? "Simpler C representation" : "Assembly with explanatory comments", explanation.readable_code]]) {
+      const column = document.createElement("div"); paragraph(column, label, "h3"); paragraph(column, code, "pre"); comparison.append(column);
+    }
+    readable.append(comparison);
+    paragraph(readable, "What changed", "h3"); paragraph(readable, explanation.changes);
+    paragraph(readable, `GPT-6 Luna explanation · Illustrative reconstruction; equivalence has not been verified. ${explanation.caveats}`);
+  } else {
+    paragraph(readable, explanation?.message || "Readable explanation is not included in this inspection.");
+  }
+  const stageNames = {
+    mem2reg: ["Remove temporary variable storage", "Promotes eligible local variables from stack loads and stores to direct values in LLVM IR."],
+    instcombine: ["Simplify calculations", "Combines and simplifies arithmetic and other instructions where LLVM's rules allow it."],
+    simplifycfg: ["Simplify branches and paths", "Cleans up redundant branches and control-flow blocks."],
+    dce: ["Remove unused calculations", "Removes instructions whose results are unused and which have no required side effects."]
+  };
   const stages = $("inspection-stages"); stages.replaceChildren();
   data.stages.forEach((stage, index) => {
     const details = document.createElement("details"), summary = document.createElement("summary");
-    summary.textContent = `${index + 1}. ${stage.title} · ${stage.features.instruction_count} instructions${stage.changed === null ? "" : stage.changed ? " · IR changed" : " · no IR change"}`;
+    const name = index === 0 ? "Translate C into compiler instructions" : stageNames[stage.action_id]?.[0] || stage.title;
+    const count = stage.features.instruction_count;
+    const change = index === 0 ? `${count} IR instructions` : `${data.stages[index - 1].features.instruction_count} → ${count} IR instructions${stage.changed ? "" : " · nothing changed"}`;
+    summary.textContent = `${index + 1}. ${name} · ${change}`;
+    const description = document.createElement("p");
+    description.textContent = explanation?.status === "completed" ? explanation.stage_explanations[index] :
+      (index === 0 ? "Clang translates your C into LLVM's intermediate representation. This is compiler code, not CPU instructions." :
+        `${stageNames[stage.action_id]?.[1] || "Applies this LLVM transformation when possible."} ${stage.changed ? "The compiler representation changed in this run." : "This step made no change in this run."}`);
     const pipeline = document.createElement("p"); pipeline.className = "muted"; pipeline.textContent = stage.pipeline;
     const counts = document.createElement("p"); counts.className = "note";
     counts.textContent = `Loads: ${stage.features.loads} · Stores: ${stage.features.stores} · Conditional branches: ${stage.features.conditional_branches} · Phi nodes: ${stage.features.phi_nodes}`;
     const code = document.createElement("pre"); code.textContent = index === 0 ? stage.ir : stage.diff || "No textual IR change. This pass found no applicable transformation at this stage.";
-    details.append(summary, pipeline, counts, code); stages.append(details);
+    details.append(summary, pipeline, counts, code);
+    const card = document.createElement("div"); card.append(description, details); stages.append(card);
   });
   $("inspection-assembly").textContent = data.assembly;
   $("inspection-commands").textContent = JSON.stringify(data.commands, null, 2);

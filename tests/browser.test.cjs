@@ -64,6 +64,75 @@ test('browser rejects seeds beyond its exact integer range', async t => {
   assert.equal(submissions, 0);
 });
 
+test('selected test set opens complete evidence and runs every exact preset', async t => {
+  const catalog = JSON.parse(fs.readFileSync(path.join(root, 'examples/showcase/catalog.json')));
+  assert.ok(catalog.items.length >= 3, 'multiple measured cases must be available');
+  const submissions = [];
+  const page = await launch(t, async (route, url, json) => {
+    if (url.pathname === '/v1/experiments' && route.request().method() === 'POST') {
+      submissions.push(route.request().postDataJSON());
+      await json({ id: 'showcase-fresh' }); return true;
+    }
+    if (url.pathname === '/v1/experiments/showcase-fresh') {
+      await json({ id: 'showcase-fresh', status: 'running', stage: 'search', progress: { planned_candidates: 40, attempted_candidates: 1, valid_candidates: 1 } }); return true;
+    }
+    return false;
+  });
+  await page.locator('.showcase-case').first().waitFor();
+  assert.equal(await page.locator('.showcase-case').count(), catalog.items.length);
+  assert.match(await page.locator('#showcase-selection').innerText(), /Selected showcase, not a representative evaluation/);
+  assert.match(await page.locator('#showcase-selection').innerText(), new RegExp(`excluded ${catalog.excluded}`));
+  const wins = catalog.items.filter(item => item.comparisons.holdout.guided_vs_o3.label === 'win').length;
+  assert.match(await page.locator('#showcase-win-count').innerText(), new RegExp(`^${wins} confirmed held-out wins`));
+  await page.locator('#showcase-wins-only').check();
+  assert.equal(await page.locator('.showcase-case:visible').count(), wins);
+  await page.locator('#showcase-wins-only').uncheck();
+  assert.equal(await page.locator('.showcase-case:visible').count(), catalog.items.length);
+  for (const item of catalog.items) {
+    const card = page.locator(`[data-case-id="${item.id}"]`);
+    await card.getByRole('button', { name: 'Open measured evidence' }).click();
+    await page.waitForFunction(id => document.getElementById('run-id').textContent === id, item.experiment_id);
+    await page.locator('#results').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#comparisons tbody tr').count(), 10);
+    assert.match(await page.locator('#summary-link').getAttribute('href'), new RegExp(`/showcase/${item.id}/summary.json$`));
+    await card.getByRole('button', { name: 'Run this test' }).click();
+    await page.waitForFunction(() => document.getElementById('run-id').textContent === 'showcase-fresh');
+    assert.deepEqual(submissions.at(-1), item.request);
+  }
+  assert.equal(submissions.length, catalog.items.length);
+  await page.locator('.showcase-panel').evaluate(element => element.scrollIntoView({ block: 'start' }));
+  if (process.env.SHOWCASE_SCREENSHOT) await page.screenshot({ path: process.env.SHOWCASE_SCREENSHOT });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('.showcase-case').first().evaluate(element => element.scrollIntoView({ block: 'start' }));
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  if (process.env.SHOWCASE_MOBILE_SCREENSHOT) await page.screenshot({ path: process.env.SHOWCASE_MOBILE_SCREENSHOT });
+});
+
+test('showcase rerun reports a busy worker error without losing saved cases', async t => {
+  const page = await launch(t, async (route, url) => {
+    if (url.pathname === '/v1/experiments' && route.request().method() === 'POST') {
+      await route.fulfill({ status: 409, json: { error: { message: 'An experiment is already running' } } }); return true;
+    }
+    return false;
+  });
+  await page.locator('.showcase-run').first().click();
+  await page.locator('#showcase-error').waitFor({ state: 'visible' });
+  assert.match(await page.locator('#showcase-error').innerText(), /already running/);
+  assert.equal(await page.locator('.showcase-run').first().isEnabled(), true);
+  assert.ok(await page.locator('.showcase-case').count() > 0);
+});
+
+test('showcase stays readable without LLVM and disables fresh runs', async t => {
+  const page = await launch(t, async (route, url, json) => {
+    if (url.pathname === '/v1/health') { await json({ toolchain_ready: false }); return true; }
+    return false;
+  });
+  await page.locator('.showcase-case').first().waitFor();
+  assert.equal(await page.locator('.showcase-run').first().isEnabled(), false);
+  await page.locator('.showcase-case').first().getByRole('button', { name: 'Open measured evidence' }).click();
+  await page.locator('#results').waitFor({ state: 'visible' });
+});
+
 test('saved uint64 seeds display exactly without JavaScript rounding', async t => {
   const raw = JSON.stringify(bundle).replaceAll('"seed":17', '"seed":18446744073709551615');
   const page = await launch(t, async (route, url) => {

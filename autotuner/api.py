@@ -47,6 +47,7 @@ class ExperimentCreateBody(BaseModel):
 class InspectionBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     source: str = Field(min_length=1, max_length=65536)
+    explain: bool = False
     max_passes: int = Field(default=4, ge=1, le=4)
     action_ids: list[str] | None = Field(default=None, min_length=1, max_length=4)
     llm_mode: Literal["auto", "off", "openai"] | None = None
@@ -234,7 +235,8 @@ def inspect_code(body: InspectionBody, request: Request):
             return error_response(409, "RUN_IN_PROGRESS", "Wait for the tuning experiment to finish before inspecting code")
         readiness = service(request).preflight()
         return inspect_source(body.source, service(request)._toolchain, readiness["catalog"],
-                              max_passes=body.max_passes, action_ids=body.action_ids, llm_mode=body.llm_mode)
+                              max_passes=body.max_passes, action_ids=body.action_ids, llm_mode=body.llm_mode,
+                              explain=body.explain)
     except InspectionError as exc:
         return error_response(exc.status_code, exc.code, str(exc), {"diagnostics": exc.diagnostics})
     except ValueError as exc:
