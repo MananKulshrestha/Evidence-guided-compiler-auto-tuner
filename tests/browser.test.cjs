@@ -64,6 +64,131 @@ test('browser rejects seeds beyond its exact integer range', async t => {
   assert.equal(submissions, 0);
 });
 
+test('both Quick flows explicitly select local rules without fixed inspection passes', async t => {
+  const requests = [];
+  let matchingCalls = 0;
+  const page = await launch(t, async (route, url) => {
+    if (url.pathname === '/v1/source-comparisons') {
+      matchingCalls++;
+      await route.fulfill({ json: { matched: false, notice: 'Compile-only source' } }); return true;
+    }
+    if (route.request().method() === 'POST') {
+      requests.push({ path: url.pathname, body: route.request().postDataJSON() });
+      await route.fulfill({ status: 422, json: { error: { message: 'Request captured' } } });
+      return true;
+    }
+    return false;
+  });
+  await page.locator('#source-code').fill(fs.readFileSync(path.join(root, 'benchmarks/pipeline.c'), 'utf8'));
+  await page.locator('#inspect-quick').click();
+  await page.locator('#inspection-error').waitFor({ state: 'visible' });
+  assert.equal(requests[0].path, '/v1/code-runs');
+  assert.equal(requests[0].body.arguments, '');
+  assert.equal(requests[0].body.stdin, '');
+  assert.equal(requests[0].body.max_passes, 4);
+  assert.equal('action_ids' in requests[0].body, false);
+  await page.locator('#run-button').click();
+  await page.locator('#form-error').waitFor({ state: 'visible' });
+  assert.equal(requests[1].path, '/v1/experiments');
+  assert.equal(requests[1].body.mode, 'quick');
+  assert.equal(requests[1].body.llm_mode, 'off');
+  assert.equal(await page.locator('#inspection-explain').count(), 0);
+  await page.locator('#inspect-button').click();
+  assert.equal(requests[2].path, '/v1/inspections');
+  assert.equal(requests[2].body.llm_mode, 'openai');
+  assert.equal(requests[2].body.explain, true);
+  await page.locator('#mode').selectOption('full');
+  await page.locator('#run-button').click();
+  assert.equal(requests[3].body.mode, 'full');
+  assert.equal(requests[3].body.llm_mode, 'off');
+  assert.equal(matchingCalls, 0, 'Quick must never match source or start a benchmark, even for exact bundled code');
+});
+
+test('explicit full benchmark starts runtime workflow and blocks duplicate submissions', async t => {
+  let inspectionCalls = 0, comparisons = 0;
+  const source = fs.readFileSync(path.join(root, 'benchmarks/pipeline.c'), 'utf8');
+  const page = await launch(t, async (route, url, json) => {
+    if (url.pathname === '/v1/benchmarks/pipeline/source') { await json({ source }); return true; }
+    if (url.pathname === '/v1/source-comparisons') {
+      comparisons++;
+      assert.equal(route.request().postDataJSON().source, source);
+      await json({ matched: true, id: 'runtime-pasted', notice: 'Fresh measurements',
+        source_match: { display_name: 'Two-stage array pipeline', request: { budget_per_strategy: 20, confirmation_rounds: 10 } } });
+      return true;
+    }
+    if (url.pathname === '/v1/inspections') { inspectionCalls++; await json({}); return true; }
+    if (url.pathname === '/v1/experiments/runtime-pasted') {
+      await json({ id: 'runtime-pasted', status: 'running', stage: 'search', progress: { planned_candidates: 40, attempted_candidates: 1, valid_candidates: 1 } }); return true;
+    }
+    return false;
+  });
+  await page.locator('#load-benchmark-example').click();
+  await page.locator('#source-runtime-status').waitFor({ state: 'visible' });
+  await page.locator('#measure-source-runtime').click();
+  await page.locator('#run-status').waitFor({ state: 'visible' });
+  assert.equal(comparisons, 1);
+  assert.equal(inspectionCalls, 0);
+  assert.equal(await page.locator('#inspection-results').isVisible(), false);
+  assert.match(await page.locator('#source-runtime-status').innerText(), /measuring program execution, not compilation speed/);
+  assert.match(await page.locator('#progress-text').innerText(), /1\/40/);
+  assert.equal(await page.locator('#measure-source-runtime').isEnabled(), false);
+  assert.equal(await page.locator('#inspect-quick').isEnabled(), false);
+});
+
+test('Quick displays runtimes of submitted code and sends its arguments and stdin', async t => {
+  const source = '#include <stdio.h>\nint main(void) { puts("42"); return 0; }';
+  let calls = 0;
+  const page = await launch(t, async (route, url, json) => {
+    if (url.pathname === '/v1/code-runs') {
+      calls++;
+      assert.deepEqual(route.request().postDataJSON(), { source, arguments: '"two words"', stdin: '21', max_passes: 4 });
+      await json({ notice: 'Fresh runtime measurements', o3: { median_ns: 2000000, mad_ns: 100, build_ns: 5000000 },
+        guided: { median_ns: 1000000, mad_ns: 100, build_ns: 6000000, action_ids: ['instcombine'] },
+        speedup: 2, runtime_reduction_percent: 50, paired_wins: 5, paired_rounds: 5,
+        args: ['two words'], stdout_sha256: 'output-hash', output: '42\n', wall_ns: 10000000, candidates: [], commands: [], samples: [] });
+      return true;
+    }
+    return false;
+  });
+  await page.locator('#source-code').fill(source);
+  await page.locator('#code-arguments').fill('"two words"');
+  await page.locator('#code-stdin').fill('21');
+  await page.locator('#inspect-quick').click();
+  await page.locator('#code-runtime-results').waitFor({ state: 'visible' });
+  assert.equal(calls, 1);
+  assert.match(await page.locator('#code-runtime-metrics').innerText(), /Clang -O3 runtime/);
+  assert.match(await page.locator('#code-runtime-metrics').innerText(), /50.00%/);
+  assert.equal(await page.locator('#code-runtime-output').textContent(), '42\n');
+  assert.equal(await page.locator('#inspection-results').isVisible(), false);
+});
+
+test('runtime comparison shows measured output and cached build provenance', async t => {
+  const evidence = structuredClone(bundle);
+  for (const comparison of Object.values(evidence.summary.comparisons)) {
+    comparison.variants = { o3: { median_ns: 1500000, mad_ns: 100000, executable_bytes: 16000 },
+      guided: { median_ns: 1200000, mad_ns: 100000, executable_bytes: 16000 } };
+    for (const stats of Object.values(comparison.variants)) {
+      if (!stats) continue;
+      stats.build = { compiler_ns: 12000000, cache_hit: true, scope: 'Original opt + backend + link' };
+      stats.checksums = ['checksum:0000000000000001'];
+      stats.min_ns = 1000000;
+      stats.max_ns = 2000000;
+      stats.sample_count = 10;
+    }
+  }
+  const page = await launch(t, async (route, url, json) => {
+    if (url.pathname === '/examples/full-dot/bundle.json') { await json(evidence); return true; }
+    return false;
+  });
+  await page.getByRole('button', { name: 'dot · saved full Portable evidence' }).click();
+  await page.locator('#runtime-comparison tbody tr').first().waitFor();
+  const text = await page.locator('#runtime-comparison').innerText();
+  assert.match(text, /Normal Clang -O3/);
+  assert.match(text, /12.00 ms \(cached; original\)/);
+  assert.match(text, /checksum:0000000000000001/);
+  assert.match(text, /Held-out workload/);
+});
+
 test('selected test set opens complete evidence and runs every exact preset', async t => {
   const catalog = JSON.parse(fs.readFileSync(path.join(root, 'examples/showcase/catalog.json')));
   assert.ok(catalog.items.length >= 3, 'multiple measured cases must be available');

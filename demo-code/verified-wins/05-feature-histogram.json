@@ -1,0 +1,646 @@
+{
+  "status": "completed",
+  "mode": "code_runtime",
+  "executed": true,
+  "llm_mode": "off",
+  "source": "/* Histogram of XOR features\n * Generate a byte feature from two channels, then count it into 256 histogram bins.\n * No program arguments or standard input are needed.\n * This intentionally staged implementation exposes a loop-fusion opportunity.\n * Based on the project's pipeline/dot-product/histogram benchmark patterns.\n */\n#include <inttypes.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n\nstatic uint64_t next_u64(uint64_t *state) {\n    uint64_t z = (*state += UINT64_C(0x9e3779b97f4a7c15));\n    z = (z ^ (z >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);\n    z = (z ^ (z >> 27)) * UINT64_C(0x94d049bb133111eb);\n    return z ^ (z >> 31);\n}\n\nstatic uint64_t hash_u64(uint64_t hash, uint64_t value) {\n    for (unsigned shift = 0; shift < 64; shift += 8) {\n        hash ^= (value >> shift) & UINT64_C(0xff);\n        hash *= UINT64_C(1099511628211);\n    }\n    return hash;\n}\n\nint main(void) {\n    const uint64_t size = 8000000, seed = 79, repeat = 3;\n    uint32_t *a = malloc((size_t)size * sizeof(*a));\n    uint32_t *b = malloc((size_t)size * sizeof(*b));\n    uint64_t *stage = malloc((size_t)size * sizeof(*stage));\n    if (!a || !b || !stage) {\n        fputs(\"allocation failed\\n\", stderr);\n        free(a); free(b); free(stage);\n        return 3;\n    }\n    uint64_t state = seed;\n    for (uint64_t i = 0; i < size; ++i) {\n        a[i] = (uint32_t)(next_u64(&state) & UINT64_C(1023));\n        b[i] = (uint32_t)(next_u64(&state) & UINT64_C(1023));\n    }\n    uint64_t hash = UINT64_C(14695981039346656037);\n    for (uint64_t r = 0; r < repeat; ++r) {\n        uint64_t bins[256] = {0};\n        a[r % size] ^= (uint32_t)(r + 1);\n        for (uint64_t i = 0; i < size; ++i) {\n            stage[i] = (a[i] ^ (b[i] << 1)) & 255u;\n        }\n        for (uint64_t i = 0; i < size; ++i) {\n            uint64_t x = stage[i];\n            ++bins[x];\n        }\n        for (unsigned bin = 0; bin < 256; ++bin) hash = hash_u64(hash, bins[bin]);\n    }\n    printf(\"checksum:%016\" PRIx64 \"\\n\", hash);\n    free(a); free(b); free(stage);\n    return 0;\n}\n",
+  "args": [],
+  "stdin": "",
+  "source_sha256": "49883423f5da271667f2f45f199a391eb1c4dc0103f078104c3c50f947ba4e15",
+  "correctness": "stdout_matches_o0_and_o3_on_supplied_input",
+  "output": "checksum:76c5bb1cd484593f\n",
+  "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+  "stdout_bytes": 26,
+  "guided": {
+    "median_ns": 68122836,
+    "mad_ns": 2703071,
+    "min_ns": 64901257,
+    "max_ns": 71462888,
+    "samples_ns": [
+      70825907,
+      68122836,
+      71462888,
+      66872736,
+      64901257
+    ],
+    "build_ns": 279274789,
+    "action_ids": [
+      "loop-fusion",
+      "slp-vectorizer"
+    ],
+    "pipeline": "function(loop-fusion),function(slp-vectorizer)",
+    "executable_bytes": 16248
+  },
+  "o3": {
+    "median_ns": 83135665,
+    "mad_ns": 487207,
+    "min_ns": 79287700,
+    "max_ns": 98562455,
+    "samples_ns": [
+      98562455,
+      82648458,
+      79287700,
+      83277118,
+      83135665
+    ],
+    "build_ns": 214817314,
+    "executable_bytes": 16248
+  },
+  "speedup": 1.2203788021978415,
+  "runtime_reduction_percent": 18.058229281019162,
+  "paired_wins": 5,
+  "paired_rounds": 5,
+  "candidates": [
+    {
+      "id": "0",
+      "action_ids": [
+        "loop-fusion"
+      ],
+      "pipeline": "function(loop-fusion)",
+      "reason": "Loop/memory-traffic hypothesis; measured before selection.",
+      "status": "valid",
+      "search_median_ns": 70640718,
+      "build_ns": 228794436
+    },
+    {
+      "id": "1",
+      "action_ids": [
+        "loop-fusion",
+        "slp-vectorizer"
+      ],
+      "pipeline": "function(loop-fusion),function(slp-vectorizer)",
+      "reason": "Loop/memory-traffic hypothesis; measured before selection.",
+      "status": "valid",
+      "search_median_ns": 69123472,
+      "build_ns": 279274789
+    },
+    {
+      "id": "2",
+      "action_ids": [
+        "licm"
+      ],
+      "pipeline": "function(loop-mssa(licm))",
+      "reason": "One-action probe; feature weight 3.0.",
+      "status": "valid",
+      "search_median_ns": 84225219,
+      "build_ns": 228975562
+    },
+    {
+      "id": "3",
+      "action_ids": [
+        "loop-unroll"
+      ],
+      "pipeline": "function(loop-unroll)",
+      "reason": "One-action probe; feature weight 3.0.",
+      "status": "valid",
+      "search_median_ns": 78320033,
+      "build_ns": 229492235
+    }
+  ],
+  "samples": [
+    {
+      "duration_ns": 123130743,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "reference"
+    },
+    {
+      "duration_ns": 86807032,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "o3-warmup"
+    },
+    {
+      "duration_ns": 87178139,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "candidate-0-check"
+    },
+    {
+      "duration_ns": 75579156,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-0-search-0"
+    },
+    {
+      "duration_ns": 70640718,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-0-search-1"
+    },
+    {
+      "duration_ns": 67996733,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-0-search-2"
+    },
+    {
+      "duration_ns": 70647067,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "candidate-1-check"
+    },
+    {
+      "duration_ns": 68865243,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-1-search-0"
+    },
+    {
+      "duration_ns": 72064178,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-1-search-1"
+    },
+    {
+      "duration_ns": 69123472,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-1-search-2"
+    },
+    {
+      "duration_ns": 91902486,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "candidate-2-check"
+    },
+    {
+      "duration_ns": 95230628,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-2-search-0"
+    },
+    {
+      "duration_ns": 84225219,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-2-search-1"
+    },
+    {
+      "duration_ns": 81836864,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-2-search-2"
+    },
+    {
+      "duration_ns": 79711368,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "candidate-3-check"
+    },
+    {
+      "duration_ns": 86476010,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-3-search-0"
+    },
+    {
+      "duration_ns": 78320033,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-3-search-1"
+    },
+    {
+      "duration_ns": 76372187,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-3-search-2"
+    },
+    {
+      "duration_ns": 98562455,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "o3-round-0",
+      "round": 0,
+      "variant": "o3"
+    },
+    {
+      "duration_ns": 70825907,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "guided-round-0",
+      "round": 0,
+      "variant": "guided"
+    },
+    {
+      "duration_ns": 68122836,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "guided-round-1",
+      "round": 1,
+      "variant": "guided"
+    },
+    {
+      "duration_ns": 82648458,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "o3-round-1",
+      "round": 1,
+      "variant": "o3"
+    },
+    {
+      "duration_ns": 79287700,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "o3-round-2",
+      "round": 2,
+      "variant": "o3"
+    },
+    {
+      "duration_ns": 71462888,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "guided-round-2",
+      "round": 2,
+      "variant": "guided"
+    },
+    {
+      "duration_ns": 66872736,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "guided-round-3",
+      "round": 3,
+      "variant": "guided"
+    },
+    {
+      "duration_ns": 83277118,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "o3-round-3",
+      "round": 3,
+      "variant": "o3"
+    },
+    {
+      "duration_ns": 83135665,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "o3-round-4",
+      "round": 4,
+      "variant": "o3"
+    },
+    {
+      "duration_ns": 64901257,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "d1f9290b8d03146c7973b42be1abb02c90d14a559f7dccbe427fb7af6a81e54b",
+      "stdout_bytes": 26,
+      "stdout": "checksum:76c5bb1cd484593f\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "guided-round-4",
+      "round": 4,
+      "variant": "guided"
+    }
+  ],
+  "commands": [
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-std=c17",
+        "-fno-lto",
+        "-fPIE",
+        "-march=x86-64",
+        "-O0",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/source.c",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/o0",
+        "-pie"
+      ],
+      "duration_ns": 214917396,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-std=c17",
+        "-fno-lto",
+        "-fPIE",
+        "-march=x86-64",
+        "-O3",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/source.c",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/o3",
+        "-pie"
+      ],
+      "duration_ns": 214817314,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-std=c17",
+        "-fno-lto",
+        "-fPIE",
+        "-march=x86-64",
+        "-O1",
+        "-emit-llvm",
+        "-c",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/source.c",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/seed.bc"
+      ],
+      "duration_ns": 32236108,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/opt",
+        "-verify-each",
+        "-passes=function(loop-fusion)",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/seed.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-0.bc"
+      ],
+      "duration_ns": 15940504,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/llc",
+        "-O3",
+        "-filetype=obj",
+        "-mcpu=x86-64",
+        "-relocation-model=pic",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-0.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-0.o"
+      ],
+      "duration_ns": 15996980,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-pie",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-0.o",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-0"
+      ],
+      "duration_ns": 164620844,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/opt",
+        "-verify-each",
+        "-passes=function(loop-fusion),function(slp-vectorizer)",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/seed.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-1.bc"
+      ],
+      "duration_ns": 15947187,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/llc",
+        "-O3",
+        "-filetype=obj",
+        "-mcpu=x86-64",
+        "-relocation-model=pic",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-1.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-1.o"
+      ],
+      "duration_ns": 16015301,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-pie",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-1.o",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-1"
+      ],
+      "duration_ns": 215076193,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/opt",
+        "-verify-each",
+        "-passes=function(loop-mssa(licm))",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/seed.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-2.bc"
+      ],
+      "duration_ns": 16238035,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/llc",
+        "-O3",
+        "-filetype=obj",
+        "-mcpu=x86-64",
+        "-relocation-model=pic",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-2.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-2.o"
+      ],
+      "duration_ns": 15943242,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-pie",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-2.o",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-2"
+      ],
+      "duration_ns": 164558177,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/opt",
+        "-verify-each",
+        "-passes=function(loop-unroll)",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/seed.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-3.bc"
+      ],
+      "duration_ns": 16334247,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/llc",
+        "-O3",
+        "-filetype=obj",
+        "-mcpu=x86-64",
+        "-relocation-model=pic",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-3.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-3.o"
+      ],
+      "duration_ns": 16240463,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-pie",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-3.o",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-ovf5wi6_/candidate-3"
+      ],
+      "duration_ns": 164681417,
+      "returncode": 0,
+      "timed_out": false
+    }
+  ],
+  "wall_ns": 3607613499,
+  "notice": "Fresh execution timings of this submitted source on these arguments/stdin. Four local candidates, three search samples each, five alternating confirmation rounds. Process startup and I/O are included. Output agreement on this input is not proof of equivalence; this quick observation has no held-out claim. Compilation/search cost is separate from runtime."
+}

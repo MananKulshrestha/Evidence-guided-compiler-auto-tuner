@@ -5,6 +5,7 @@ import queue
 import threading
 import asyncio
 import subprocess
+import shlex
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -21,6 +22,9 @@ from .models import ExperimentRequest
 from .llm import OpenAISettings
 from .service import TuningService
 from .inspection import InspectionError, inspect_source
+from .source_comparison import match_source
+from .registry import benchmark
+from .code_run import compare_code
 
 
 class WorkloadBody(BaseModel):
@@ -51,6 +55,19 @@ class InspectionBody(BaseModel):
     max_passes: int = Field(default=4, ge=1, le=4)
     action_ids: list[str] | None = Field(default=None, min_length=1, max_length=4)
     llm_mode: Literal["auto", "off", "openai"] | None = None
+
+
+class SourceComparisonBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    source: str = Field(min_length=1, max_length=65536)
+
+
+class CodeRunBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    source: str = Field(min_length=1, max_length=65536)
+    arguments: str = Field(default="", max_length=4096)
+    stdin: str = Field(default="", max_length=65536)
+    max_passes: int = Field(default=4, ge=1, le=4)
 
 
 def error_response(status: int, code: str, message: str, details: dict | None = None) -> JSONResponse:
@@ -223,6 +240,30 @@ def retry_experiment(experiment_id: UUID, request: Request, response: Response):
     return enqueue_experiment(new_id, request, response)
 
 
+@app.get("/v1/benchmarks/{benchmark_id}/source")
+def benchmark_source(benchmark_id: str):
+    try:
+        entry = benchmark(benchmark_id)
+    except ValueError:
+        return error_response(404, "NOT_FOUND", "Unknown benchmark")
+    return {"benchmark_id": benchmark_id, "source": Path(entry["source_path"]).read_text(encoding="utf-8")}
+
+
+@app.post("/v1/source-comparisons")
+def compare_pasted_source(body: SourceComparisonBody, request: Request, response: Response):
+    if len(body.source.encode("utf-8")) > 65536 or "\x00" in body.source:
+        return error_response(422, "INVALID_REQUEST", "Provide C source at most 64 KiB without NUL characters")
+    match = match_source(body.source)
+    if match is None:
+        return {"matched": False, "notice": "No bundled benchmark harness matches this source. Inspection can show compiler output, but cannot measure program runtime."}
+    result = create_experiment(ExperimentCreateBody(**match["request"]), request, response)
+    if isinstance(result, Response):
+        return result
+    response.status_code = 202
+    return {**result, "matched": True, "source_match": match,
+            "notice": "Recognized bundled source. Running fresh full local search and correctness-checked runtime confirmation using the benchmark's O1 seed and O3 reference. Previous wins are not guaranteed."}
+
+
 @app.post("/v1/inspections")
 def inspect_code(body: InspectionBody, request: Request):
     if request.app.state.closing:
@@ -243,6 +284,29 @@ def inspect_code(body: InspectionBody, request: Request):
         return error_response(422, "INVALID_REQUEST", str(exc))
     except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
         return error_response(503, "INSPECTION_UNAVAILABLE", str(exc)[:500])
+    finally:
+        request.app.state.inspection_lock.release()
+
+
+@app.post("/v1/code-runs")
+def run_submitted_code(body: CodeRunBody, request: Request):
+    if request.app.state.closing:
+        return error_response(503, "SERVICE_STOPPING", "The service is shutting down")
+    if not request.app.state.inspection_lock.acquire(blocking=False):
+        return error_response(409, "CODE_RUN_IN_PROGRESS", "The current code comparison is still running. Please wait.")
+    try:
+        current = service(request).store.one("SELECT experiment_id FROM worker_slot WHERE singleton_id=1")
+        if current and current["experiment_id"]:
+            return error_response(409, "RUN_IN_PROGRESS", "A separate full benchmark is active. Cancel it below before comparing this code.")
+        readiness = service(request).preflight()
+        return compare_code(body.source, service(request)._toolchain, readiness["catalog"],
+                            args=shlex.split(body.arguments), stdin=body.stdin, max_passes=body.max_passes)
+    except InspectionError as exc:
+        return error_response(exc.status_code, exc.code, str(exc), {"diagnostics": exc.diagnostics})
+    except ValueError as exc:
+        return error_response(422, "INVALID_REQUEST", str(exc))
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        return error_response(503, "CODE_RUN_UNAVAILABLE", str(exc)[:500])
     finally:
         request.app.state.inspection_lock.release()
 

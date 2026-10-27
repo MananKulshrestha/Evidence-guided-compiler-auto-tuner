@@ -1,0 +1,645 @@
+{
+  "status": "completed",
+  "mode": "code_runtime",
+  "executed": true,
+  "llm_mode": "off",
+  "source": "/* Signal energy after gain\n * Apply a gain and offset to two channels, then calculate the transformed energy.\n * No program arguments or standard input are needed.\n * This intentionally staged implementation exposes a loop-fusion opportunity.\n * Based on the project's pipeline/dot-product/histogram benchmark patterns.\n */\n#include <inttypes.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n\nstatic uint64_t next_u64(uint64_t *state) {\n    uint64_t z = (*state += UINT64_C(0x9e3779b97f4a7c15));\n    z = (z ^ (z >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);\n    z = (z ^ (z >> 27)) * UINT64_C(0x94d049bb133111eb);\n    return z ^ (z >> 31);\n}\n\nstatic uint64_t hash_u64(uint64_t hash, uint64_t value) {\n    for (unsigned shift = 0; shift < 64; shift += 8) {\n        hash ^= (value >> shift) & UINT64_C(0xff);\n        hash *= UINT64_C(1099511628211);\n    }\n    return hash;\n}\n\nint main(void) {\n    const uint64_t size = 8000000, seed = 79, repeat = 3;\n    uint32_t *a = malloc((size_t)size * sizeof(*a));\n    uint32_t *b = malloc((size_t)size * sizeof(*b));\n    uint64_t *stage = malloc((size_t)size * sizeof(*stage));\n    if (!a || !b || !stage) {\n        fputs(\"allocation failed\\n\", stderr);\n        free(a); free(b); free(stage);\n        return 3;\n    }\n    uint64_t state = seed;\n    for (uint64_t i = 0; i < size; ++i) {\n        a[i] = (uint32_t)(next_u64(&state) & UINT64_C(1023));\n        b[i] = (uint32_t)(next_u64(&state) & UINT64_C(1023));\n    }\n    uint64_t hash = UINT64_C(14695981039346656037);\n    for (uint64_t r = 0; r < repeat; ++r) {\n        a[r % size] ^= (uint32_t)(r + 1);\n        for (uint64_t i = 0; i < size; ++i) {\n            stage[i] = (uint64_t)a[i] * 4 + (uint64_t)b[i] * 2 + 17;\n        }\n        uint64_t total = 0;\n        for (uint64_t i = 0; i < size; ++i) {\n            uint64_t x = stage[i];\n            total += x * (x + 1);\n        }\n        hash = hash_u64(hash, total);\n    }\n    printf(\"checksum:%016\" PRIx64 \"\\n\", hash);\n    free(a); free(b); free(stage);\n    return 0;\n}\n",
+  "args": [],
+  "stdin": "",
+  "source_sha256": "00f945603a07f661ea31fe89fa7f3dc16686af146e50538eabb54f1e8930ba54",
+  "correctness": "stdout_matches_o0_and_o3_on_supplied_input",
+  "output": "checksum:a7c6cf50a90874af\n",
+  "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+  "stdout_bytes": 26,
+  "guided": {
+    "median_ns": 61516462,
+    "mad_ns": 661612,
+    "min_ns": 60854850,
+    "max_ns": 63409925,
+    "samples_ns": [
+      60854850,
+      62631294,
+      63409925,
+      61154906,
+      61516462
+    ],
+    "build_ns": 228438305,
+    "action_ids": [
+      "loop-fusion"
+    ],
+    "pipeline": "function(loop-fusion)",
+    "executable_bytes": 16200
+  },
+  "o3": {
+    "median_ns": 80894912,
+    "mad_ns": 1021994,
+    "min_ns": 79605981,
+    "max_ns": 82294618,
+    "samples_ns": [
+      81259877,
+      80894912,
+      79605981,
+      79872918,
+      82294618
+    ],
+    "build_ns": 214747589,
+    "executable_bytes": 16200
+  },
+  "speedup": 1.315012427080088,
+  "runtime_reduction_percent": 23.955091267050268,
+  "paired_wins": 5,
+  "paired_rounds": 5,
+  "candidates": [
+    {
+      "id": "0",
+      "action_ids": [
+        "loop-fusion"
+      ],
+      "pipeline": "function(loop-fusion)",
+      "reason": "Loop/memory-traffic hypothesis; measured before selection.",
+      "status": "valid",
+      "search_median_ns": 63930881,
+      "build_ns": 228438305
+    },
+    {
+      "id": "1",
+      "action_ids": [
+        "loop-fusion",
+        "slp-vectorizer"
+      ],
+      "pipeline": "function(loop-fusion),function(slp-vectorizer)",
+      "reason": "Loop/memory-traffic hypothesis; measured before selection.",
+      "status": "valid",
+      "search_median_ns": 65747736,
+      "build_ns": 278910450
+    },
+    {
+      "id": "2",
+      "action_ids": [
+        "licm"
+      ],
+      "pipeline": "function(loop-mssa(licm))",
+      "reason": "One-action probe; feature weight 3.0.",
+      "status": "valid",
+      "search_median_ns": 77971930,
+      "build_ns": 228412513
+    },
+    {
+      "id": "3",
+      "action_ids": [
+        "loop-unroll"
+      ],
+      "pipeline": "function(loop-unroll)",
+      "reason": "One-action probe; feature weight 3.0.",
+      "status": "valid",
+      "search_median_ns": 78165072,
+      "build_ns": 228569761
+    }
+  ],
+  "samples": [
+    {
+      "duration_ns": 128797788,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "reference"
+    },
+    {
+      "duration_ns": 80558809,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "o3-warmup"
+    },
+    {
+      "duration_ns": 59358663,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "candidate-0-check"
+    },
+    {
+      "duration_ns": 62827607,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-0-search-0"
+    },
+    {
+      "duration_ns": 63930881,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-0-search-1"
+    },
+    {
+      "duration_ns": 64611017,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-0-search-2"
+    },
+    {
+      "duration_ns": 64768427,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "candidate-1-check"
+    },
+    {
+      "duration_ns": 65747736,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-1-search-0"
+    },
+    {
+      "duration_ns": 65364777,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-1-search-1"
+    },
+    {
+      "duration_ns": 69955887,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-1-search-2"
+    },
+    {
+      "duration_ns": 79124968,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "candidate-2-check"
+    },
+    {
+      "duration_ns": 80920854,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-2-search-0"
+    },
+    {
+      "duration_ns": 77971930,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-2-search-1"
+    },
+    {
+      "duration_ns": 76393374,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-2-search-2"
+    },
+    {
+      "duration_ns": 95212223,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "candidate-3-check"
+    },
+    {
+      "duration_ns": 78165072,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-3-search-0"
+    },
+    {
+      "duration_ns": 77621176,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-3-search-1"
+    },
+    {
+      "duration_ns": 80733904,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-3-search-2"
+    },
+    {
+      "duration_ns": 81259877,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "o3-round-0",
+      "round": 0,
+      "variant": "o3"
+    },
+    {
+      "duration_ns": 60854850,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "guided-round-0",
+      "round": 0,
+      "variant": "guided"
+    },
+    {
+      "duration_ns": 62631294,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "guided-round-1",
+      "round": 1,
+      "variant": "guided"
+    },
+    {
+      "duration_ns": 80894912,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "o3-round-1",
+      "round": 1,
+      "variant": "o3"
+    },
+    {
+      "duration_ns": 79605981,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "o3-round-2",
+      "round": 2,
+      "variant": "o3"
+    },
+    {
+      "duration_ns": 63409925,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "guided-round-2",
+      "round": 2,
+      "variant": "guided"
+    },
+    {
+      "duration_ns": 61154906,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "guided-round-3",
+      "round": 3,
+      "variant": "guided"
+    },
+    {
+      "duration_ns": 79872918,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "o3-round-3",
+      "round": 3,
+      "variant": "o3"
+    },
+    {
+      "duration_ns": 82294618,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "o3-round-4",
+      "round": 4,
+      "variant": "o3"
+    },
+    {
+      "duration_ns": 61516462,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "4c1d0eee4dc43587d99177e105872fa223c758650e6175973223fe1683efea50",
+      "stdout_bytes": 26,
+      "stdout": "checksum:a7c6cf50a90874af\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "guided-round-4",
+      "round": 4,
+      "variant": "guided"
+    }
+  ],
+  "commands": [
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-std=c17",
+        "-fno-lto",
+        "-fPIE",
+        "-march=x86-64",
+        "-O0",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/source.c",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/o0",
+        "-pie"
+      ],
+      "duration_ns": 214620711,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-std=c17",
+        "-fno-lto",
+        "-fPIE",
+        "-march=x86-64",
+        "-O3",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/source.c",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/o3",
+        "-pie"
+      ],
+      "duration_ns": 214747589,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-std=c17",
+        "-fno-lto",
+        "-fPIE",
+        "-march=x86-64",
+        "-O1",
+        "-emit-llvm",
+        "-c",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/source.c",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/seed.bc"
+      ],
+      "duration_ns": 32195628,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/opt",
+        "-verify-each",
+        "-passes=function(loop-fusion)",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/seed.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-0.bc"
+      ],
+      "duration_ns": 16109119,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/llc",
+        "-O3",
+        "-filetype=obj",
+        "-mcpu=x86-64",
+        "-relocation-model=pic",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-0.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-0.o"
+      ],
+      "duration_ns": 15790860,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-pie",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-0.o",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-0"
+      ],
+      "duration_ns": 164342698,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/opt",
+        "-verify-each",
+        "-passes=function(loop-fusion),function(slp-vectorizer)",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/seed.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-1.bc"
+      ],
+      "duration_ns": 15958514,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/llc",
+        "-O3",
+        "-filetype=obj",
+        "-mcpu=x86-64",
+        "-relocation-model=pic",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-1.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-1.o"
+      ],
+      "duration_ns": 15853357,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-pie",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-1.o",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-1"
+      ],
+      "duration_ns": 214902951,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/opt",
+        "-verify-each",
+        "-passes=function(loop-mssa(licm))",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/seed.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-2.bc"
+      ],
+      "duration_ns": 15797201,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/llc",
+        "-O3",
+        "-filetype=obj",
+        "-mcpu=x86-64",
+        "-relocation-model=pic",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-2.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-2.o"
+      ],
+      "duration_ns": 15936376,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-pie",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-2.o",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-2"
+      ],
+      "duration_ns": 164483308,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/opt",
+        "-verify-each",
+        "-passes=function(loop-unroll)",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/seed.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-3.bc"
+      ],
+      "duration_ns": 15989305,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/llc",
+        "-O3",
+        "-filetype=obj",
+        "-mcpu=x86-64",
+        "-relocation-model=pic",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-3.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-3.o"
+      ],
+      "duration_ns": 15908618,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-pie",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-3.o",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-osvqrwo1/candidate-3"
+      ],
+      "duration_ns": 164476210,
+      "returncode": 0,
+      "timed_out": false
+    }
+  ],
+  "wall_ns": 3450620437,
+  "notice": "Fresh execution timings of this submitted source on these arguments/stdin. Four local candidates, three search samples each, five alternating confirmation rounds. Process startup and I/O are included. Output agreement on this input is not proof of equivalence; this quick observation has no held-out claim. Compilation/search cost is separate from runtime."
+}

@@ -1,0 +1,27 @@
+[
+  {
+    "file": "01-dot-product.c",
+    "title": "Dot product",
+    "purpose": "Multiply two vectors, materialize the products, then sum them."
+  },
+  {
+    "file": "02-squared-error.c",
+    "title": "Sum of squared errors",
+    "purpose": "Materialize absolute differences, then sum their squares."
+  },
+  {
+    "file": "03-thresholded-signal.c",
+    "title": "Thresholded signal accumulation",
+    "purpose": "Combine two channels, then accumulate only values above a threshold."
+  },
+  {
+    "file": "04-signal-energy.c",
+    "title": "Signal energy after gain",
+    "purpose": "Apply a gain and offset to two channels, then calculate the transformed energy."
+  },
+  {
+    "file": "05-feature-histogram.c",
+    "title": "Histogram of XOR features",
+    "purpose": "Generate a byte feature from two channels, then count it into 256 histogram bins."
+  }
+]

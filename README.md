@@ -111,11 +111,106 @@ An empty-action binary goes through the same bitcode/backend path. Direct `clang
 
 ## Benchmarks and interface
 
+### Comparison testing version
+
+The explanation checkbox has been removed. Both benchmark modes and Quick
+explicitly disable OpenAI. Only clicking **Understandable** explicitly enables
+OpenAI pass selection and the GPT explanation. No GPT request happens on page
+load. In the source box, **Quick** now builds and executes the submitted C file
+directly using `/v1/code-runs`. Supply a complete program with `main`, command-line
+arguments, and/or stdin. It does not match or substitute bundled benchmark code.
+Four local candidates are compiled from an O1 seed and measured three times;
+the best valid candidate is selected from those measurements, then compared with
+direct Clang O3 in five alternating paired rounds. Loop-containing programs also
+get loop-fusion and fusion/SLP hypotheses. No GPT or random comparator is used.
+All candidate and confirmation stdout is hashed in full and must match both O0
+and O3 on the supplied input. This is an output check, not an equivalence proof.
+
+The result shows actual runtime median/MAD, raw samples, stdout, speedup, selected
+passes, separate source-to-executable build times, and whole comparison time.
+Linux pidfd exit notifications avoid timed-wait polling bins for short programs.
+Process startup and I/O remain included. Each execution has a two-second timeout;
+the quick run has a 30-second budget. Reduce program inputs/repetitions if it
+exceeds those limits. Results are temporary and downloadable as JSON; Quick does
+not create a full benchmark experiment or use its queue. Source without `main`
+must be given a harness, or inspected using Understandable without execution.
+
+**Full runtime benchmark (takes a few minutes)** is a separate
+button: it checks for an exact bundled match (allowing line-ending, BOM, and
+outer-whitespace differences). A match starts the **same full runtime
+experiment worker** used by the benchmark UI: O1 seed, 20 guided and 20 random
+proposals, five search samples, checksum validation, and ten paired confirmation
+rounds on tuning and held-out inputs. It does not reuse saved timing results or
+force a winning label. This separate full path requires bundled source;
+Quick accepts other complete C programs. Understandable inspection keeps the
+GPT-6 Luna behavior and is compile-only.
+
+Click **Load measured pipeline example**, then **Full runtime benchmark** to reproduce the
+`pipeline-8m-r24-s79` preset from the source box. The preset uses tuning size
+8,000,000 / seed 79 / repeat 24 and holdout size 8,500,000 / seed 2079 / repeat 24.
+Other exact bundled programs use their default full settings. The inspection
+pass-count limit does not apply to these full searches. The source route is
+`POST /v1/source-comparisons` with `{"source": "..."}`: a match returns 202 and
+the normal experiment polling links; unmatched source returns `matched: false`
+without starting an experiment. `GET /v1/benchmarks/{id}/source` returns the
+exact bundled code. Modified source is never silently replaced with a benchmark;
+Quick compiles exactly the submitted source with its own arguments and stdin.
+The displayed median (for example 215 ms) is one execution of a compiled binary,
+not the duration of building, searching, checking, and repeatedly measuring all
+candidates. While an experiment runs, launch buttons stay disabled; use the
+experiment's Cancel button to end it before inspecting code. Reloading the page
+reconnects to a queued/running experiment rather than creating another one.
+
+Custom-code inspection now compiles the same source with normal **direct Clang
+`-O3`** as well as the selected passes. Expand **Compare optimized LLVM IR** or
+**Compare generated x86-64 assembly** for both actual compiler outputs. Timing
+cards show source-to-IR and source-to-assembly compiler subprocess wall time,
+pass proposal time, and the whole inspection duration. O3 IR and assembly are
+independent compilations; do not add their times. Guided time includes its
+frontend, SSA preparation, selected pass commands and backend, with proposal
+time separate. These are single observations, not statistical compiler-speed
+claims. IR instruction counts do not measure execution speed. Compilation
+overhead cards are collapsed by default and explicitly labeled as compilation.
+
+For actual runtime comparisons, choose a built-in benchmark under **Configure
+a run**, select **Full comparison**, and start the experiment. The **Runtime
+and build comparison** table shows normal Clang O3, the empty control, and the
+guided/random finalists on tuning and held-out inputs: runtime median/MAD,
+minimum/maximum, sample count, speedup versus O3, executable bytes, compiler
+time, and observed checksums. A ratio above 1 means faster than O3; use the
+paired outcome labels to judge whether the evidence supports a win. Raw timings
+remain in the JSON/CSV downloads. Quick mode remains demo-only.
+
+Compiler times are persisted with new variants, so deleting build artifacts
+does not remove the report evidence. Cached finalists explicitly display their
+original build time. Candidate compiler time covers opt/backend/link and excludes
+the shared O1 seed and the overall search; direct O3 time includes its full
+source-to-executable command. Empty-control time includes the O1 seed. These
+different scopes are displayed explicitly. Older reports display unavailable
+fields rather than invented timings or outputs. Quick custom-source execution
+uses its bounded comparison; the separate full benchmark uses the existing
+benchmark harness. Previous runtime wins cannot guarantee identical results
+under different machine load or toolchains.
+
+For an isolated local comparison service in this worktree:
+
+```bash
+AUTOTUNER_DATA_DIR="$HOME/.local/share/compiler-autotuner-comparison-test" \
+  python -m autotuner serve --host 127.0.0.1 --port 8107
+```
+
+Check that port 8107 is free first. This uses a separate database, build cache,
+and run directory from the default checkout.
+
 ### Inspect your own C code
+
+The compile-only trace described below belongs to **Understandable** and the
+`/v1/inspections` API. **Quick** uses the direct runtime runner described above;
+it requires `main` and supplied inputs and displays measured execution times.
 
 Use **Inspect your own C code** at the top of the webpage to paste a single C17 translation unit or load a `.c` file (up to 64 KiB). Functions without `main` are supported. No runtime inputs or expected outputs are needed.
 
-The trace shows Clang's initial IR at `-O0` with `optnone` disabled, explicit `mem2reg` preparation into SSA form, the guided proposal and rationale, each verified pass's IR diff and instruction counts, before/after IR, and final x86-64 assembly generated by `llc -O3`. Unchanged steps are labeled as such. Download the trace as JSON to keep a copy; inspections are temporary and are not saved as benchmark experiments. Pass selection sends only extracted feature counts. The optional GPT-6 Luna explanation sends the submitted C, each IR stage, and final assembly to OpenAI (store=false), using an additional API request. Uncheck the explanation option to keep source local. Local rule-based inspection works with LLM mode off.
+The trace shows Clang's initial IR at `-O0` with `optnone` disabled, explicit `mem2reg` preparation into SSA form, the guided proposal and rationale, each verified pass's IR diff and instruction counts, before/after IR, and final x86-64 assembly generated by `llc -O3`. Unchanged steps are labeled as such. Download the trace as JSON to keep a copy; inspections are temporary and are not saved as benchmark experiments. Pass selection sends only extracted feature counts. The optional GPT-6 Luna explanation sends the submitted C, each IR stage, and final assembly to OpenAI (store=false), using an additional API request. Only the Understandable button enables GPT pass selection and explanation. Quick keeps source local and explicitly sets LLM mode off.
 
 Inspection does not link or execute your program and does not establish output correctness or a runtime speedup. It displays real LLVM IR/assembly plus an optional plain-language walkthrough and illustrative C reconstruction (or annotated assembly when C is unsuitable). Reconstructed code is not verified equivalent and is never compiled or executed. Explanation failures leave the compiler results available. Only single-file C and headers available in the local toolchain are supported; custom build flags, project folders, extra source files, and custom header uploads are not part of this flow. Compiler errors appear inline. Inspection and web tuning jobs cannot run at the same time, so inspection does not interfere with timing measurements.
 

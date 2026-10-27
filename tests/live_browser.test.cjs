@@ -64,8 +64,10 @@ test('real browser, FastAPI worker, LLVM, saved evidence, cancel, and retry', { 
   });
   await page.goto('http://autotuner.test/');
   await page.waitForFunction(() => document.getElementById('health').textContent.startsWith('Toolchain ready'));
-  // A showcase button must execute its real full preset, with local guided rules.
-  await page.locator('.showcase-run').first().click();
+  // Pasted benchmark code must use the same measured full worker as the showcase.
+  await page.locator('#load-benchmark-example').click();
+  await page.locator('#source-runtime-status').waitFor({ state: 'visible' });
+  await page.locator('#measure-source-runtime').click();
   await page.waitForFunction(() => document.getElementById('status-badge').textContent === 'completed', null, { timeout: 180000 });
   await page.locator('#comparisons h3').filter({ hasText: 'Held-out' }).waitFor();
   assert.equal(await page.locator('#trial-rows tr').count(), 40);
@@ -75,23 +77,34 @@ test('real browser, FastAPI worker, LLVM, saved evidence, cancel, and retry', { 
   assert.equal(showcaseRun.request.llm_mode, 'off');
   assert.equal(showcaseRun.request.confirmation_rounds, 10);
   assert.equal(showcaseRun.request.mode, 'full');
+  assert.equal(showcaseRun.request.tuning_input.size, 8000000);
+  assert.equal(showcaseRun.request.tuning_input.seed, 79);
+  assert.equal(showcaseRun.request.tuning_input.repeat, 24);
+  assert.match(await page.locator('#source-runtime-status').innerText(), /measuring program execution/);
+  assert.equal(await page.locator('#inspection-results').isVisible(), false);
   if (process.env.AUTOTUNER_LIVE_OPENAI === '1') {
-    assert.match(await page.locator('#health').textContent(), /OpenAI: gpt-6-luna/);
+    assert.match(await page.locator('#health').textContent(), /Local rules by default/);
   }
-  // Inspect a function without main, runtime inputs, or expected output.
+  // Quick executes the submitted program; Understandable is the explicit paid trace.
   await page.getByRole('button', { name: 'Load example code' }).click();
-  await page.locator('#source-code').fill('int twice(int x) { int redundant = x + 0; return redundant * 2; }');
-  await page.getByRole('button', { name: 'Inspect code' }).click();
-  await page.locator('#inspection-results').waitFor({ state: 'visible', timeout: 90000 });
-  assert.match(await page.locator('#inspection-notice').innerText(), /not executed/);
-  assert.match(await page.locator('#inspection-before').textContent(), /define.*twice/);
-  assert.match(await page.locator('#inspection-after').textContent(), /define.*twice/);
-  assert.match(await page.locator('#inspection-assembly').textContent(), /twice:/);
-  assert.ok(await page.locator('#inspection-stages details').count() >= 3);
-  const inspectionDownload = await page.locator('#inspection-download').getAttribute('href');
-  const inspected = await page.evaluate(async url => (await fetch(url)).json(), inspectionDownload);
-  assert.equal(inspected.performance, 'not_measured');
-  assert.equal(inspected.executed, false);
+  if (process.env.AUTOTUNER_LIVE_OPENAI === '1') {
+    await page.locator('#source-code').fill('int twice(int x) { return x * 2; }');
+    await page.locator('#inspect-button').click();
+    await page.locator('#inspection-results').waitFor({ state: 'visible', timeout: 90000 });
+    assert.match(await page.locator('#inspection-after').textContent(), /define.*twice/);
+    assert.match(await page.locator('#comparison-o3-asm').textContent(), /twice:/);
+  } else {
+    await page.locator('#inspect-quick').click();
+    await page.locator('#code-runtime-results').waitFor({ state: 'visible', timeout: 45000 });
+    assert.match(await page.locator('#code-runtime-metrics').innerText(), /Clang -O3 runtime/);
+    const url = await page.locator('#code-runtime-download').getAttribute('href');
+    const measured = await page.evaluate(async url => (await fetch(url)).json(), url);
+    assert.equal(measured.executed, true);
+    assert.equal(measured.llm_mode, 'off');
+    assert.equal(measured.paired_rounds, 5);
+    assert.ok(measured.o3.median_ns > 0 && measured.guided.median_ns > 0);
+    assert.ok(measured.samples.every(row => row.stdout_sha256 === measured.stdout_sha256));
+  }
   assert.equal(await page.locator('#inspection-error').isVisible(), false);
   const completed = [];
   for (const name of ['dot', 'matmul', 'histogram', 'pipeline', 'skew_histogram']) {
@@ -112,6 +125,9 @@ test('real browser, FastAPI worker, LLVM, saved evidence, cancel, and retry', { 
     completed.push(id);
     assert.equal(await page.locator('#trial-rows tr').count(), 4);
     assert.equal(await page.locator('#comparisons tbody tr').count(), 10);
+    assert.match(await page.locator('#runtime-comparison').innerText(), /Normal Clang -O3/);
+    assert.match(await page.locator('#runtime-comparison').innerText(), /\(fresh\)/);
+    assert.match(await page.locator('#runtime-comparison').innerText(), /checksum:[0-9a-f]{16}/);
     await page.locator('#trial-rows tr').first().click();
     await page.locator('#trial-detail').waitFor({ state: 'visible' });
     assert.match(await page.locator('#trial-detail').innerText(), /expected_checksums/);

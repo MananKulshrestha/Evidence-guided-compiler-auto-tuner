@@ -29,6 +29,16 @@ def test_inspection_shows_real_ir_diffs_and_assembly_without_main(llvm):
     assert any("--- before.ll" in stage["diff"] for stage in result["stages"])
     assert all("-verify-each" in command["args"] for command in result["commands"] if "opt" in Path(command["args"][0]).name)
     assert not list(inspection.DATA_DIR.glob("inspect-*"))
+    comparison = result["compiler_comparison"]
+    assert "define" in comparison["o3"]["ir"]
+    assert "twice:" in comparison["o3"]["assembly"]
+    assert comparison["o3"]["source_to_ir_ns"] > 0
+    assert comparison["o3"]["source_to_assembly_ns"] > 0
+    assert comparison["guided"]["source_to_assembly_ns"] > comparison["guided"]["source_to_ir_ns"] > 0
+    assert result["inspection_wall_ns"] > comparison["o3"]["source_to_assembly_ns"]
+    o3_commands = [command["args"] for command in result["commands"] if "-O3" in command["args"] and "clang" in Path(command["args"][0]).name]
+    assert len(o3_commands) == 2
+    assert all("-march=x86-64" in args for args in o3_commands)
 
 
 def test_submitted_program_is_never_executed(llvm, tmp_path, monkeypatch):
@@ -93,6 +103,22 @@ def test_compiler_timeout_is_classified(llvm, monkeypatch):
     with pytest.raises(InspectionError) as exc:
         inspect_source(SOURCE, *llvm, action_ids=["instcombine"])
     assert exc.value.code == "COMPILER_TIMEOUT"
+
+
+def test_local_inspection_uses_benchmark_rules_even_with_openai_configured(llvm, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only-key")
+    monkeypatch.setenv("AUTOTUNER_LLM_MODE", "openai")
+    def forbidden(*args, **kwargs):
+        pytest.fail("Local inspection must not call OpenAI")
+    monkeypatch.setattr(inspection, "OpenAIPolicy", forbidden)
+    monkeypatch.setattr(inspection, "explain_inspection", forbidden)
+    result = inspect_source(SOURCE, *llvm, llm_mode="off", explain=False)
+    available = tuple(item["id"] for item in llvm[1]["items"] if item["available"])
+    expected = inspection.GuidedPolicy(available, 4, 29, result["stages"][1]["features"]).propose(set(), [])
+    assert tuple(result["proposal"]["action_ids"]) == expected.action_ids
+    assert result["proposal"]["proposal_type"] == "feature_prior"
+    assert result["llm"]["mode"] == "off"
+    assert result["explanation"]["status"] == "disabled"
 
 
 def test_inspection_api_validation_and_failure_recovery(llvm):

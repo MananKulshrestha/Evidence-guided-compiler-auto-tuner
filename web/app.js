@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const state = { benchmarks: [], activeId: null, poller: null, viewVersion: 0, detailVersion: 0, savedOffset: 0, toolchainReady: false, showcaseSubmitting: false };
+const state = { benchmarks: [], activeId: null, poller: null, viewVersion: 0, detailVersion: 0, savedOffset: 0, toolchainReady: false, showcaseSubmitting: false, runtimeActive: false, runtimeExperimentId: null };
 const ms = (ns) => ns == null ? "—" : `${(ns / 1e6).toFixed(2)} ms`;
 
 async function getJSON(url, options = {}) {
@@ -47,12 +47,15 @@ async function loadSetup() {
   $("health").title = health.toolchain_error || "LLVM actions, compilation, linking, and checksum validation passed";
   if (health.llm) {
     const llm = health.llm;
-    $("health").textContent += llm.error ? " · OpenAI configuration error" : llm.mode === "openai" ? ` · OpenAI: ${llm.model}` : " · Local guided search";
+    $("health").textContent += " · Local rules by default";
+    if (llm.configured) $("health").title += `; ${llm.model} is used only when you click Understandable`;
     if (llm.error) $("health").title += `; ${llm.error}`;
   }
   $("run-button").disabled = !health.toolchain_ready;
   state.toolchainReady = health.toolchain_ready;
   $("inspect-button").disabled = !health.toolchain_ready;
+  $("inspect-quick").disabled = !health.toolchain_ready;
+  $("measure-source-runtime").disabled = !health.toolchain_ready;
   state.benchmarks = benchmarks.items;
   for (const item of benchmarks.items) {
     const option = document.createElement("option"); option.value = item.id; option.textContent = item.display_name;
@@ -206,6 +209,11 @@ async function loadSaved(append = false) {
   const data = await getJSON(`/v1/experiments?limit=20&offset=${offset}`);
   const container = $("saved-runs"); if (!append) container.replaceChildren();
   state.savedOffset = offset + data.items.length;
+  const active = data.items.find((item) => ["queued", "running"].includes(item.status));
+  state.runtimeExperimentId = active?.id || null;
+  state.runtimeActive = Boolean(active);
+  syncRuntimeButtons();
+  if (!state.activeId && active) await watchRun(active.id);
   $("load-more-saved").hidden = state.savedOffset >= data.total;
   if (!data.items.length) { const p = document.createElement("p"); p.className = "muted"; p.textContent = "No saved experiments yet."; container.append(p); return; }
   for (const item of data.items) {
@@ -223,6 +231,7 @@ async function startRun(event) {
     tuning_input: { size: Number($("size").value), seed: Number($("seed").value), repeat: Number($("repeat").value) },
     budget_per_strategy: Number($("budget").value), max_sequence_length: Number($("max-length").value),
     search_repetitions: Number($("search-repetitions").value), confirmation_rounds: Number($("confirmation-rounds").value) };
+  body.llm_mode = "off";
   if (body.mode === "full") body.holdout_input = Object.fromEntries(["size", "seed", "repeat"].map((key) => [key, Number($("holdout-" + key).value)]));
   const numbers = [...Object.values(body.tuning_input), ...Object.values(body.holdout_input || {})];
   if (!numbers.every(Number.isSafeInteger)) { showError("Workload values must be exact integers; browser seeds are limited to 9007199254740991."); button.disabled = false; return; }
@@ -230,7 +239,7 @@ async function startRun(event) {
     const data = await getJSON("/v1/experiments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     await watchRun(data.id);
   } catch (error) { showError(error.message); }
-  finally { button.disabled = false; }
+  finally { syncRuntimeButtons(); }
 }
 
 async function watchRun(id) {
@@ -253,6 +262,10 @@ async function updateRun(id, version) {
     $("progress-text").textContent = `${p.attempted_candidates}/${p.planned_candidates} candidate proposals · ${p.valid_candidates} valid · ${run.stage}`;
     $("run-message").textContent = run.error_message || (run.cancellation_requested ? "Cancellation requested. Waiting for the current compiler stage or execution to finish." : run.status === "completed" ? "Experiment finished. Fresh confirmation measurements are shown below." : "Measurements are saved after each trial.");
     const terminal = ["completed", "failed", "interrupted", "cancelled"].includes(run.status);
+    if (!terminal) state.runtimeExperimentId = run.id;
+    else if (state.runtimeExperimentId === run.id) state.runtimeExperimentId = null;
+    state.runtimeActive = Boolean(state.runtimeExperimentId);
+    syncRuntimeButtons();
     $("cancel-run").hidden = terminal; $("cancel-run").disabled = Boolean(run.cancellation_requested);
     $("retry-run").hidden = !terminal;
     if (terminal) {
@@ -329,6 +342,7 @@ function renderTrials(trials, bundledDetails, liveId) {
 }
 
 function renderComparisons(report) {
+  renderRuntimeComparison(report);
   const container = $("comparisons"); container.replaceChildren();
   const readable = (name) => name.replaceAll("_vs_", " vs ").replaceAll("o3", "Clang -O3").replaceAll("empty", "empty control");
   for (const [input, comparisons] of Object.entries(report.comparisons)) {
@@ -354,6 +368,37 @@ function renderComparisons(report) {
   const failures = document.createElement("p"); failures.textContent = `Non-valid proposals: ${Object.entries(report.failure_counts).map(([key, count]) => `${key}: ${count}`).join(", ") || "none"}. No-IR-change proposals consume budget and are not correctness failures.`; explanation.append(failures);
   const tuning = report.comparisons.tuning, holdout = report.comparisons.holdout;
   if (holdout && Object.keys(tuning).some((key) => tuning[key]?.label === "win" && holdout[key]?.label !== "win")) { const p = document.createElement("p"); p.textContent = "A tuning win did not reproduce on holdout; treat it as workload-specific."; explanation.append(p); }
+}
+
+function renderRuntimeComparison(report) {
+  const container = $("runtime-comparison"); container.replaceChildren();
+  const names = { o3: "Normal Clang -O3", empty: "Empty control", guided: "Guided finalist", random: "Random finalist" };
+  for (const [input, comparison] of Object.entries(report.comparisons)) {
+    const heading = document.createElement("h3"); heading.textContent = input === "holdout" ? "Held-out workload" : "Tuning workload";
+    const wrapper = document.createElement("div"); wrapper.className = "table-wrap";
+    const table = document.createElement("table"), head = document.createElement("thead"), body = document.createElement("tbody"), header = document.createElement("tr");
+    for (const label of ["Compiler", "Runtime median ± MAD", "Min / max", "Samples", "Speedup vs O3", "Executable", "Compiler time", "Observed output"]) {
+      const cell = document.createElement("th"); cell.textContent = label; header.append(cell);
+    }
+    head.append(header);
+    for (const [key, label] of Object.entries(names)) {
+      const stats = comparison.variants?.[key];
+      if (!stats) continue;
+      const baseline = comparison.variants?.o3;
+      const build = stats.build;
+      const row = document.createElement("tr");
+      const values = [label, `${ms(stats.median_ns)} ± ${ms(stats.mad_ns)}`, `${ms(stats.min_ns)} / ${ms(stats.max_ns)}`,
+        stats.sample_count ?? stats.samples_ns?.length ?? "—",
+        baseline && stats.median_ns > 0 ? `${(baseline.median_ns / stats.median_ns).toFixed(3)}×` : "—",
+        stats.executable_bytes == null ? "—" : `${stats.executable_bytes.toLocaleString()} B`,
+        build ? `${ms(build.compiler_ns)}${build.cache_hit ? " (cached; original)" : " (fresh)"}` : "Unavailable",
+        stats.checksums?.join("; ") || "Unavailable in saved report"];
+      for (const value of values) { const cell = document.createElement("td"); cell.textContent = String(value); row.append(cell); }
+      if (build) row.title = build.scope;
+      body.append(row);
+    }
+    table.append(head, body); wrapper.append(table); container.append(heading, wrapper);
+  }
 }
 
 $("benchmark").addEventListener("change", applyDefaults);
@@ -388,19 +433,53 @@ const inspectionExample = `int sum_positive(const int *values, int count) {
     return total;
 }
 `;
+const runtimeExample = `#include <stdio.h>
+#include <stdint.h>
+int main(void) {
+    uint64_t total = 0;
+    for (uint64_t i = 0; i < 1000000; ++i) total += i * i;
+    printf("%llu\\n", (unsigned long long)total);
+    return 0;
+}
+`;
 let inspectionDownloadURL = null;
+let codeRuntimeDownloadURL = null;
 function inspectionError(message) {
   $("inspection-error").textContent = message;
   $("inspection-error").hidden = false;
 }
+function syncRuntimeButtons() {
+  for (const id of ["inspect-quick", "inspect-button", "measure-source-runtime", "run-button"]) {
+    $(id).disabled = state.runtimeActive || !state.toolchainReady;
+    $(id).title = state.runtimeActive ? "A runtime experiment is active. Wait or use Cancel experiment below." : "";
+  }
+}
 function clearInspection() {
+  $("code-runtime-results").hidden = true;
+  if (codeRuntimeDownloadURL) { URL.revokeObjectURL(codeRuntimeDownloadURL); codeRuntimeDownloadURL = null; }
   $("inspection-results").hidden = true;
+  $("source-runtime-status").hidden = true;
   $("inspection-error").hidden = true;
   if (inspectionDownloadURL) { URL.revokeObjectURL(inspectionDownloadURL); inspectionDownloadURL = null; }
 }
 $("source-code").addEventListener("input", clearInspection);
+$("code-arguments").addEventListener("input", clearInspection);
+$("code-stdin").addEventListener("input", clearInspection);
 $("load-code-example").addEventListener("click", () => {
-  clearInspection(); $("source-code").value = inspectionExample; $("source-file").value = "";
+  clearInspection(); $("source-code").value = runtimeExample; $("source-file").value = "";
+  $("code-arguments").value = ""; $("code-stdin").value = "";
+});
+$("load-benchmark-example").addEventListener("click", async () => {
+  clearInspection();
+  try {
+    const data = await getJSON("/v1/benchmarks/pipeline/source");
+    $("source-code").value = data.source;
+    $("source-file").value = "";
+    $("code-arguments").value = "--size 8000000 --seed 79 --repeat 3";
+    $("code-stdin").value = "";
+    $("source-runtime-status").textContent = "Loaded pipeline source and arguments. Quick measures this submitted program against O3 using a bounded local search. Full runtime benchmark is a separate, longer experiment.";
+    $("source-runtime-status").hidden = false;
+  } catch (error) { inspectionError(error.message); }
 });
 $("source-file").addEventListener("change", async () => {
   clearInspection();
@@ -412,23 +491,62 @@ $("source-file").addEventListener("change", async () => {
 });
 $("inspection-form").addEventListener("submit", async (event) => {
   event.preventDefault(); clearInspection();
-  const quick = event.submitter?.value === "quick";
+  const quick = event.submitter?.value !== "understandable";
+  const runtimeRequested = event.submitter?.value === "runtime";
   const source = $("source-code").value;
   if (!source.trim() || new TextEncoder().encode(source).length > 65536) { inspectionError("Paste non-empty C source no larger than 64 KiB."); return; }
-  const controls = ["inspect-button", "inspect-quick", "source-code", "source-file", "load-code-example", "inspection-max-passes", "inspection-explain"];
+  const controls = ["inspect-button", "inspect-quick", "measure-source-runtime", "run-button", "source-code", "source-file", "load-code-example", "load-benchmark-example", "inspection-max-passes", "code-arguments", "code-stdin"];
   controls.forEach((id) => { $(id).disabled = true; });
   $("inspection-progress").hidden = false;
-  $("inspection-progress").textContent = quick ? "Quick: compiling → one cleanup pass → assembly…" : "Compiling → selecting passes → verifying → preparing readable explanation…";
+  $("inspection-progress").textContent = quick ? "Compiling your code → measuring four local candidates → checking output → paired guided/O3 runtime comparison…" : "Compiling → selecting passes → verifying → preparing readable explanation…";
   try {
+    if (runtimeRequested) {
+      $("inspection-progress").textContent = "Starting the full runtime benchmark (multi-candidate search and repeated measurements)…";
+      const runtime = await getJSON("/v1/source-comparisons", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source }) });
+      if (runtime.matched) {
+        const settings = runtime.source_match.request;
+        $("source-runtime-status").textContent = `${runtime.source_match.display_name}: measuring program execution, not compilation speed. ${settings.budget_per_strategy} candidates per strategy; ${settings.confirmation_rounds} paired rounds on tuning and held-out inputs. The benchmark settings override the inspection pass-count limit. ${runtime.notice}`;
+        $("source-runtime-status").hidden = false;
+        await watchRun(runtime.id);
+        $("run-status").scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+      $("source-runtime-status").textContent = runtime.notice;
+      $("source-runtime-status").hidden = false;
+      return;
+    }
+    if (quick) {
+      const data = await getJSON("/v1/code-runs", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source, arguments: $("code-arguments").value, stdin: $("code-stdin").value, max_passes: Number($("inspection-max-passes").value) }) });
+      renderCodeRuntime(data);
+      return;
+    }
     const data = await getJSON("/v1/inspections", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(quick ? { source, max_passes: 1, action_ids: ["instcombine"], llm_mode: "off", explain: false } :
-        { source, max_passes: Number($("inspection-max-passes").value), explain: $("inspection-explain").checked }) });
+      body: JSON.stringify(quick ? { source, max_passes: Number($("inspection-max-passes").value), llm_mode: "off", explain: false } :
+        { source, max_passes: Number($("inspection-max-passes").value), llm_mode: "openai", explain: true }) });
     renderInspection(data);
     $("inspection-readable").hidden = quick;
     $("inspection-raw").open = quick;
   } catch (error) { inspectionError(error.message); }
-  finally { controls.forEach((id) => { $(id).disabled = false; }); $("inspection-progress").hidden = true; }
+  finally { controls.forEach((id) => { $(id).disabled = false; }); syncRuntimeButtons(); $("inspection-progress").hidden = true; }
 });
+function renderCodeRuntime(data) {
+  $("code-runtime-notice").textContent = data.notice;
+  const metrics = $("code-runtime-metrics"); metrics.replaceChildren();
+  addMetric(metrics, "Clang -O3 runtime", ms(data.o3.median_ns), `Median ± MAD ${ms(data.o3.mad_ns)}; five executions`);
+  addMetric(metrics, "Guided runtime", ms(data.guided.median_ns), `Median ± MAD ${ms(data.guided.mad_ns)}; five executions`);
+  addMetric(metrics, "Runtime reduction vs O3", `${data.runtime_reduction_percent.toFixed(2)}%`, `${data.speedup.toFixed(3)}× speedup; faster in ${data.paired_wins}/${data.paired_rounds} paired rounds`, data.runtime_reduction_percent >= 0 ? "good" : "bad");
+  addMetric(metrics, "Guided build time", ms(data.guided.build_ns), "O1 frontend + opt + backend + link; separate from execution");
+  addMetric(metrics, "O3 build time", ms(data.o3.build_ns), "Direct source-to-executable compilation");
+  addMetric(metrics, "Total comparison time", ms(data.wall_ns), "Includes building, candidate search, correctness checks and confirmation");
+  $("code-runtime-settings").textContent = `Selected passes: ${data.guided.action_ids.join(" → ")}. Arguments: ${JSON.stringify(data.args)}. Output agrees with O0 and O3 on this input. SHA-256: ${data.stdout_sha256}.`;
+  $("code-runtime-output").textContent = data.output || "(No stdout output)";
+  $("code-runtime-evidence").textContent = JSON.stringify({ candidates: data.candidates, commands: data.commands, samples: data.samples }, null, 2);
+  codeRuntimeDownloadURL = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+  $("code-runtime-download").href = codeRuntimeDownloadURL;
+  $("code-runtime-results").hidden = false;
+  $("code-runtime-results").scrollIntoView({ behavior: "smooth", block: "start" });
+}
 function renderInspection(data) {
   const first = data.stages[0], last = data.stages[data.stages.length - 1];
   $("inspection-notice").textContent = data.notice;
@@ -442,6 +560,22 @@ function renderInspection(data) {
   addMetric(metrics, "Suggested passes applied", data.proposal.action_ids.length, "LLVM verifier checked every transformation");
   $("inspection-before").textContent = first.ir;
   $("inspection-after").textContent = last.ir;
+  const comparison = data.compiler_comparison;
+  $("inspection-comparison").hidden = !comparison;
+  if (comparison) {
+    $("compiler-timing-note").textContent = comparison.timing_note;
+    const timings = $("compiler-timings"); timings.replaceChildren();
+    addMetric(timings, "Guided compilation: source → IR", ms(comparison.guided.source_to_ir_ns), "Compiler overhead; not program runtime");
+    addMetric(timings, "O3 compilation: source → IR", ms(comparison.o3.source_to_ir_ns), `${comparison.o3.features.instruction_count} IR instructions; not runtime`);
+    addMetric(timings, "Guided compilation: source → assembly", ms(comparison.guided.source_to_assembly_ns), "Compiler overhead; proposal excluded");
+    addMetric(timings, "O3 compilation: source → assembly", ms(comparison.o3.source_to_assembly_ns), "Direct clang -O3 -S; not runtime");
+    addMetric(timings, "Pass proposal time", ms(comparison.guided.proposal_ns), "Local or model-assisted selection");
+    addMetric(timings, "Whole inspection", ms(data.inspection_wall_ns), "Includes traces, both compilers, and optional explanation");
+    $("comparison-guided-ir").textContent = last.ir;
+    $("comparison-o3-ir").textContent = comparison.o3.ir;
+    $("comparison-guided-asm").textContent = data.assembly;
+    $("comparison-o3-asm").textContent = comparison.o3.assembly;
+  }
   const readable = $("inspection-readable"); readable.replaceChildren();
   const explanation = data.explanation;
   function paragraph(parent, text, tag = "p") {

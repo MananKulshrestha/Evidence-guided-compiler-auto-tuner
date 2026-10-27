@@ -5,6 +5,7 @@ from dataclasses import asdict
 import difflib
 from pathlib import Path
 import tempfile
+import time
 
 from .actions import BY_ID, compose
 from .config import DATA_DIR
@@ -40,12 +41,15 @@ def inspect_source(source: str, tc: Toolchain, catalog: dict, *, max_passes: int
     mode = settings.resolve_mode(llm_mode) if action_ids is None else "manual"
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="inspect-", dir=DATA_DIR) as directory:
+        started = time.perf_counter_ns()
         scratch = Path(directory)
         source_path = scratch / "source.c"
         source_path.write_text(source, encoding="utf-8")
         commands = []
+        durations = {}
 
         def checked(result, code, message):
+            durations[Path(result.stdout_path).stem] = result.duration_ns
             commands.append({"args": result.args, "duration_ms": round(result.duration_ns / 1e6, 2),
                              "returncode": result.returncode, "timed_out": result.timed_out})
             if not result.ok:
@@ -82,6 +86,7 @@ def inspect_source(source: str, tc: Toolchain, catalog: dict, *, max_passes: int
                 "IR_VERIFICATION_FAILED", "LLVM could not prepare valid IR")
         add_stage("Prepare SSA form (mem2reg)", "mem2reg", "mem2reg", prepared, "prepared-ir")
         features = stages[-1]["features"]
+        proposal_started = time.perf_counter_ns()
         if action_ids is not None:
             proposal = Proposal(tuple(action_ids), "manual", "Passes explicitly selected for inspection.")
         elif mode == "openai":
@@ -90,6 +95,7 @@ def inspect_source(source: str, tc: Toolchain, catalog: dict, *, max_passes: int
             proposal = GuidedPolicy(available, max_passes, 29, features).propose(set(), [])
         if proposal is None:
             raise InspectionError("NO_PROPOSAL", "No pass sequence is available")
+        proposal_ns = time.perf_counter_ns() - proposal_started
         current = prepared
         for index, action_id in enumerate(proposal.action_ids, start=1):
             output = scratch / f"step-{index}.bc"
@@ -104,6 +110,30 @@ def inspect_source(source: str, tc: Toolchain, catalog: dict, *, max_passes: int
         if assembly_file.stat().st_size > MAX_IR_BYTES:
             raise InspectionError("ASSEMBLY_TOO_LARGE", "Generated assembly is too large for this view; inspect a smaller source file")
         assembly = assembly_file.read_text(encoding="utf-8", errors="replace")
+        # Run Clang's real default O3 pipeline from source, rather than claiming
+        # a short hand-picked pass sequence represents a normal compiler.
+        o3_bitcode, o3_assembly_file = scratch / "o3.bc", scratch / "o3.s"
+        checked(execute([tc.paths["clang"], *tc.clang_flags, "-O3", "-emit-llvm", "-c",
+                         str(source_path), "-o", str(o3_bitcode)], scratch, "o3-ir", cwd=scratch),
+                "O3_COMPILE_FAILED", "Clang -O3 could not compile this source")
+        o3_ir = read_ir(o3_bitcode, "o3-text")
+        checked(execute([tc.paths["clang"], *tc.clang_flags, "-O3", "-S",
+                         str(source_path), "-o", str(o3_assembly_file)], scratch, "o3-assembly", cwd=scratch),
+                "O3_COMPILE_FAILED", "Clang -O3 could not generate assembly")
+        if o3_assembly_file.stat().st_size > MAX_IR_BYTES:
+            raise InspectionError("ASSEMBLY_TOO_LARGE", "O3 assembly is too large for this view")
+        comparison = {
+            "reference": "Direct clang -O3 from the same source and target flags",
+            "o3": {"ir": o3_ir, "features": summarize_ir(o3_ir),
+                   "assembly": o3_assembly_file.read_text(encoding="utf-8", errors="replace"),
+                   "source_to_ir_ns": durations["o3-ir"],
+                   "source_to_assembly_ns": durations["o3-assembly"]},
+            "guided": {"source_to_ir_ns": durations["compile"] + durations["prepare"] +
+                       sum(value for key, value in durations.items() if key.startswith("pass-")),
+                       "backend_ns": durations["assembly"], "proposal_ns": proposal_ns},
+            "timing_note": "Single compiler subprocess wall times, including startup. Guided IR time includes preparation and pass invocations; proposal time is separate. O3 IR and assembly are independent compilations. Trace rendering/disassembly and explanation are excluded. Runtime is not measured here; use a benchmark experiment below.",
+        }
+        comparison["guided"]["source_to_assembly_ns"] = comparison["guided"]["source_to_ir_ns"] + durations["assembly"]
         explanation = {"status": "disabled", "message": "Enable the GPT explanation to see readable code and a plain-language walkthrough."}
         if explain:
             if settings.resolve_mode(llm_mode) == "openai":
@@ -117,4 +147,5 @@ def inspect_source(source: str, tc: Toolchain, catalog: dict, *, max_passes: int
                 "llm": {"mode": mode, "model": settings.model if mode == "openai" else None,
                         "reasoning_effort": settings.reasoning_effort if mode == "openai" else None},
                 "stages": stages, "assembly": assembly, "explanation": explanation,
-                "commands": commands}
+                "commands": commands, "compiler_comparison": comparison,
+                "inspection_wall_ns": time.perf_counter_ns() - started}

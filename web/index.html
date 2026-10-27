@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Evidence-Guided LLVM Pass Tuner</title>
   <link rel="stylesheet" href="/static/style.css?v=showcase-wins-2">
-  <script src="/static/app.js?v=quick-inspection-2" defer></script>
+  <script src="/static/app.js?v=submitted-runtime-6" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -22,24 +22,45 @@
       </section>
 
       <section class="panel inspection-panel" aria-labelledby="inspection-title">
-        <div class="panel-heading"><span class="step">C</span><div><h2 id="inspection-title">Inspect your own C code</h2><p>See LLVM transformations without setting up a benchmark</p></div></div>
-        <p class="note">Paste a single C17 source file or load a .c file. A function is enough; no main, inputs, or expected output are required. See readable explanations alongside the real compiler output.</p>
+        <div class="panel-heading"><span class="step">C</span><div><h2 id="inspection-title">Run and inspect your C code</h2><p>Compare execution time with normal Clang -O3</p></div></div>
+        <p class="note">Paste a single C17 source file or load a .c file. Quick requires a complete program with main and uses the inputs below. Understandable also supports functions without main for compiler traces and GPT explanations.</p>
         <form id="inspection-form">
-          <div class="inspection-tools"><label>Load a C file<input id="source-file" type="file" accept=".c,text/x-c,text/plain"></label><button id="load-code-example" class="text-button" type="button">Load example code</button></div>
+          <div class="inspection-tools"><label>Load a C file<input id="source-file" type="file" accept=".c,text/x-c,text/plain"></label><button id="load-code-example" class="text-button" type="button">Load example code</button><button id="load-benchmark-example" class="text-button" type="button">Load measured pipeline example</button></div>
           <label for="source-code">C source</label>
-          <label><input id="inspection-explain" type="checkbox" checked> Explain with GPT-6 Luna — sends this source and compiler output to OpenAI; uses API credits. Uncheck to send only feature counts for pass selection.</label>
           <textarea id="source-code" rows="12" maxlength="65536" required spellcheck="false" placeholder="Paste your C code here…"></textarea>
-          <div class="inspection-tools"><label>Maximum suggested passes (Understandable)<select id="inspection-max-passes"><option>1</option><option>2</option><option>3</option><option selected>4</option></select></label><button id="inspect-quick" class="text-button" type="submit" value="quick">Quick ⚡</button><button id="inspect-button" type="submit" value="understandable">Understandable →</button></div>
-          <p class="note">Quick: one local cleanup pass, no GPT requests or generated explanations. Understandable: GPT-guided passes and the optional readable explanation above.</p>
+          <label>Program arguments (Quick)<input id="code-arguments" type="text" placeholder="For the pipeline example: --size 8000000 --seed 79 --repeat 3" maxlength="4096"></label>
+          <label>Standard input (Quick)<textarea id="code-stdin" rows="2" maxlength="65536" placeholder="Input your program reads with scanf, fgets, etc."></textarea></label>
+          <div class="inspection-tools"><label>Maximum suggested passes<select id="inspection-max-passes"><option>1</option><option>2</option><option>3</option><option selected>4</option></select></label><button id="inspect-quick" class="text-button" type="submit" value="quick">Quick ⚡</button><button id="inspect-button" type="submit" value="understandable">Understandable →</button></div>
+          <p class="note">Quick compiles and executes this C program with local evidence-guided tuning and direct Clang -O3, using the arguments and stdin above. It measures four candidates and confirms the winner in five paired rounds. No GPT or benchmark lookup. Provide main and deterministic output. Each execution is limited to 2 seconds and the quick comparison has a 30-second budget. Understandable uses GPT-6 Luna for compile-only inspection and explanation; it sends source and compiler output to OpenAI and uses API credits.</p>
+          <button id="measure-source-runtime" class="text-button" type="submit" value="runtime">Full runtime benchmark (takes a few minutes)</button>
+          <p class="note">The full benchmark is separate: recognized bundled source runs 20 candidates per strategy and repeated correctness-checked timings. A runtime such as 215 ms is one execution of a compiled program, not the total experiment duration. Compilation time does not measure program speed.</p>
         </form>
+        <p id="source-runtime-status" class="result-note" role="status" hidden></p>
         <p id="inspection-progress" class="muted" role="status" hidden>Compiling C → preparing IR → selecting passes → verifying each transformation…</p>
         <div id="inspection-error" class="error" role="alert" hidden></div>
+        <section id="code-runtime-results" hidden aria-label="Submitted code runtime comparison">
+          <h3>Runtime of your submitted code: guided versus Clang -O3</h3>
+          <p id="code-runtime-notice" class="note"></p>
+          <div id="code-runtime-metrics" class="metric-grid"></div>
+          <p id="code-runtime-settings"></p>
+          <details><summary>Program output (checked against O0 and O3)</summary><pre id="code-runtime-output"></pre></details>
+          <details><summary>Candidate evidence, compiler commands, and raw timings</summary><pre id="code-runtime-evidence"></pre></details>
+          <a id="code-runtime-download" download="submitted-code-runtime.json">Download runtime evidence JSON ↓</a>
+        </section>
         <section id="inspection-results" hidden aria-label="Code inspection results">
           <h3>Compiler transformation trace</h3>
           <p id="inspection-notice" class="note"></p>
           <p id="inspection-proposal"></p>
           <p id="inspection-pipeline" class="inspection-pipeline"></p>
           <div id="inspection-metrics" class="metric-grid"></div>
+          <section id="inspection-comparison" aria-label="Guided versus normal O3 compiler output" hidden>
+            <h3>Compiler output comparison — program runtime not measured</h3>
+            <p id="compiler-timing-note" class="note"></p>
+            <details><summary>Compilation overhead (not program execution speed)</summary><div id="compiler-timings" class="metric-grid"></div></details>
+            <details><summary>Compare optimized LLVM IR</summary><div class="inspection-ir-grid"><div><h3>Guided output</h3><pre id="comparison-guided-ir"></pre></div><div><h3>Normal Clang -O3 output</h3><pre id="comparison-o3-ir"></pre></div></div></details>
+            <details><summary>Compare generated x86-64 assembly</summary><div class="inspection-ir-grid"><div><h3>Guided output</h3><pre id="comparison-guided-asm"></pre></div><div><h3>Normal Clang -O3 output</h3><pre id="comparison-o3-asm"></pre></div></div></details>
+            <p class="note">For measured execution speed, configure a benchmark experiment below. Custom source inspection supports functions without main and does not run submitted programs.</p>
+          </section>
           <section id="inspection-readable" aria-label="Plain-language explanation"></section>
           <details id="inspection-raw"><summary>See the actual compiler code: before and after</summary><div class="inspection-ir-grid"><div><h3>Before: compiled LLVM IR</h3><pre id="inspection-before"></pre></div><div><h3>After: transformed LLVM IR</h3><pre id="inspection-after"></pre></div></div></details>
           <div id="inspection-stages"></div>
@@ -74,7 +95,7 @@
               <div id="holdout-fields" hidden><p class="note">Held-out workload must differ from tuning. At least ten confirmation rounds are needed for a full win/loss label.</p><div class="field-row three"><label>Holdout size<input id="holdout-size" type="number" min="1"></label><label>Holdout seed<input id="holdout-seed" type="number" min="0" max="9007199254740991"></label><label>Holdout repeat<input id="holdout-repeat" type="number" min="1" max="100"></label></div></div>
               <p class="note">Browser seeds are limited to exact JavaScript integers. The CLI and API support the full unsigned 64-bit range.</p>
             </details>
-            <p class="note">Quick mode uses one guided search and is labeled demo-only. Full mode also runs an equal-budget random search and held-out confirmation.</p>
+            <p class="note">Both modes use local rules without GPT requests. Quick is labeled demo-only. Full also runs an equal-budget random search and held-out confirmation.</p>
             <button id="run-button" type="submit">Start experiment <span>→</span></button>
           </form>
           <div id="form-error" class="error" role="alert" hidden></div>
@@ -103,7 +124,7 @@
         <div class="section-heading"><div><p class="eyebrow">03 · VERIFIED EVIDENCE</p><h2>What the compiler actually did</h2></div><span id="result-label" class="badge"></span></div>
         <div id="result-note" class="result-note"></div>
         <div id="metrics" class="metric-grid"></div>
-        <div id="comparison-panel" class="panel comparison-panel"><div id="comparisons"></div><details><summary>Interpretation and limitations</summary><div id="result-explanation"></div></details></div>
+        <div id="comparison-panel" class="panel comparison-panel"><h3>Runtime and build comparison</h3><p class="note">Fresh, interleaved confirmation samples include process startup. Build time is one observed compiler command sequence, not a repeated timing benchmark. Candidate builds exclude the shared O1 seed and the proposal/search cost; empty control includes the seed. Cached entries show the original build time. Older saved evidence may lack build/output details.</p><div id="runtime-comparison"></div><div id="comparisons"></div><details><summary>Interpretation and limitations</summary><div id="result-explanation"></div></details></div>
         <div id="charts" class="chart-grid"><div class="panel chart-panel"><h3>Best search runtime</h3><img id="search-chart" alt="Best-so-far runtime by trial"></div><div class="panel chart-panel"><h3>Size versus runtime</h3><img id="pareto-chart" alt="Candidate executable size versus runtime"></div></div>
         <div class="panel trials-panel"><div class="saved-heading"><div><h3>Candidate evidence trail</h3><p class="muted">Select a trial to inspect its commands, checksum checks, and raw samples.</p></div></div><div class="table-wrap"><table><thead><tr><th>#</th><th>Strategy</th><th>Pass actions</th><th>Status</th><th>Median</th><th>Size</th></tr></thead><tbody id="trial-rows"></tbody></table></div><div id="trial-detail" class="trial-detail" hidden></div></div>
         <div id="downloads" class="downloads"><a id="summary-link">Summary JSON ↓</a><a id="trials-link">Trials CSV ↓</a><a id="samples-link">Samples CSV ↓</a><a id="environment-link">Environment JSON ↓</a></div>
