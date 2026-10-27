@@ -125,7 +125,11 @@ def build_report(store: Store, experiment_id: str, *, write_files: bool = True) 
                 return None
             median, mad = median_mad([row["duration_ns"] for row in rows])
             return {"median_ns": median, "mad_ns": mad, "samples_ns": [row["duration_ns"] for row in rows],
-                    "executable_bytes": binary_size(variant)}
+                    "executable_bytes": binary_size(variant),
+                    "build": json.loads(variant["build_metrics_json"]) if variant.get("build_metrics_json") else None,
+                    "checksums": sorted({row["checksum"] for row in rows}),
+                    "sample_count": len(rows), "min_ns": min(row["duration_ns"] for row in rows),
+                    "max_ns": max(row["duration_ns"] for row in rows)}
         comparisons[input_kind]["variants"] = {key: confirmed_stats(value) for key, value in
                                                (("o3", o3), ("empty", empty), ("guided", guided_variant), ("random", random_variant))}
         for name, left, right in (("guided_vs_o3", o3, guided_variant), ("guided_vs_empty", empty, guided_variant),

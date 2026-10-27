@@ -93,6 +93,8 @@ class Store:
             columns = {row["name"] for row in con.execute("PRAGMA table_info(variants)")}
             if "executable_bytes" not in columns:
                 con.execute("ALTER TABLE variants ADD COLUMN executable_bytes INTEGER")
+            if "build_metrics_json" not in columns:
+                con.execute("ALTER TABLE variants ADD COLUMN build_metrics_json TEXT")
             experiment_columns = {row["name"] for row in con.execute("PRAGMA table_info(experiments)")}
             if "cancellation_requested" not in experiment_columns:
                 con.execute("ALTER TABLE experiments ADD COLUMN cancellation_requested INTEGER NOT NULL DEFAULT 0")
@@ -200,9 +202,24 @@ class Store:
 
     def create_variant(self, experiment_id: str, trial_id: str | None, kind: str, executable: Path, command_manifest: Path, digest: str) -> str:
         variant_id = str(uuid.uuid4())
+        # Persist evidence now so reports do not depend on temporary build files.
+        metrics = None
+        try:
+            commands = json.loads(command_manifest.read_text(encoding="utf-8"))
+            cached = bool(commands and commands[0].get("cache_hit"))
+            build_commands = commands[0].get("original_build_commands", []) if cached else commands
+            if build_commands and all(type(row.get("duration_ns")) is int and row.get("returncode") == 0
+                                      and not row.get("timed_out") for row in build_commands):
+                metrics = {"compiler_ns": sum(row["duration_ns"] for row in build_commands),
+                           "cache_hit": cached,
+                           "scope": "opt + backend + link; shared O1 seed and proposal/search excluded" if trial_id else
+                                    "source to executable (seed + backend + link)" if kind == "empty" else "source to executable"}
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
         with self.connect() as con:
-            con.execute("INSERT INTO variants(id,experiment_id,trial_id,kind,executable_path,executable_sha256,command_manifest_path,created_at,executable_bytes) VALUES(?,?,?,?,?,?,?,?,?)",
-                        (variant_id, experiment_id, trial_id, kind, str(executable), digest, str(command_manifest), utc_now(), executable.stat().st_size))
+            con.execute("INSERT INTO variants(id,experiment_id,trial_id,kind,executable_path,executable_sha256,command_manifest_path,created_at,executable_bytes,build_metrics_json) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                        (variant_id, experiment_id, trial_id, kind, str(executable), digest, str(command_manifest), utc_now(), executable.stat().st_size,
+                         json.dumps(metrics) if metrics else None))
         return variant_id
 
     def select_winner(self, experiment_id: str, strategy: str, trial_id: str | None) -> None:

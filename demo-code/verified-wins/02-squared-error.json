@@ -1,0 +1,645 @@
+{
+  "status": "completed",
+  "mode": "code_runtime",
+  "executed": true,
+  "llm_mode": "off",
+  "source": "/* Sum of squared errors\n * Materialize absolute differences, then sum their squares.\n * No program arguments or standard input are needed.\n * This intentionally staged implementation exposes a loop-fusion opportunity.\n * Based on the project's pipeline/dot-product/histogram benchmark patterns.\n */\n#include <inttypes.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n\nstatic uint64_t next_u64(uint64_t *state) {\n    uint64_t z = (*state += UINT64_C(0x9e3779b97f4a7c15));\n    z = (z ^ (z >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);\n    z = (z ^ (z >> 27)) * UINT64_C(0x94d049bb133111eb);\n    return z ^ (z >> 31);\n}\n\nstatic uint64_t hash_u64(uint64_t hash, uint64_t value) {\n    for (unsigned shift = 0; shift < 64; shift += 8) {\n        hash ^= (value >> shift) & UINT64_C(0xff);\n        hash *= UINT64_C(1099511628211);\n    }\n    return hash;\n}\n\nint main(void) {\n    const uint64_t size = 8000000, seed = 79, repeat = 3;\n    uint32_t *a = malloc((size_t)size * sizeof(*a));\n    uint32_t *b = malloc((size_t)size * sizeof(*b));\n    uint64_t *stage = malloc((size_t)size * sizeof(*stage));\n    if (!a || !b || !stage) {\n        fputs(\"allocation failed\\n\", stderr);\n        free(a); free(b); free(stage);\n        return 3;\n    }\n    uint64_t state = seed;\n    for (uint64_t i = 0; i < size; ++i) {\n        a[i] = (uint32_t)(next_u64(&state) & UINT64_C(1023));\n        b[i] = (uint32_t)(next_u64(&state) & UINT64_C(1023));\n    }\n    uint64_t hash = UINT64_C(14695981039346656037);\n    for (uint64_t r = 0; r < repeat; ++r) {\n        a[r % size] ^= (uint32_t)(r + 1);\n        for (uint64_t i = 0; i < size; ++i) {\n            stage[i] = a[i] > b[i] ? (uint64_t)(a[i] - b[i]) : (uint64_t)(b[i] - a[i]);\n        }\n        uint64_t total = 0;\n        for (uint64_t i = 0; i < size; ++i) {\n            uint64_t x = stage[i];\n            total += x * x;\n        }\n        hash = hash_u64(hash, total);\n    }\n    printf(\"checksum:%016\" PRIx64 \"\\n\", hash);\n    free(a); free(b); free(stage);\n    return 0;\n}\n",
+  "args": [],
+  "stdin": "",
+  "source_sha256": "819f320d638b08af900af39b5e63242b55c6b3338969fb144f86f90bc1fbc553",
+  "correctness": "stdout_matches_o0_and_o3_on_supplied_input",
+  "output": "checksum:31c78c6c9789b672\n",
+  "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+  "stdout_bytes": 26,
+  "guided": {
+    "median_ns": 62591989,
+    "mad_ns": 565472,
+    "min_ns": 60693617,
+    "max_ns": 83669966,
+    "samples_ns": [
+      62704453,
+      60693617,
+      83669966,
+      62026517,
+      62591989
+    ],
+    "build_ns": 228661426,
+    "action_ids": [
+      "loop-fusion"
+    ],
+    "pipeline": "function(loop-fusion)",
+    "executable_bytes": 16200
+  },
+  "o3": {
+    "median_ns": 80586360,
+    "mad_ns": 1091652,
+    "min_ns": 77846807,
+    "max_ns": 83180580,
+    "samples_ns": [
+      80586360,
+      77846807,
+      83180580,
+      79683838,
+      81678012
+    ],
+    "build_ns": 214845404,
+    "executable_bytes": 16200
+  },
+  "speedup": 1.2874868060192175,
+  "runtime_reduction_percent": 22.329301137314058,
+  "paired_wins": 4,
+  "paired_rounds": 5,
+  "candidates": [
+    {
+      "id": "0",
+      "action_ids": [
+        "loop-fusion"
+      ],
+      "pipeline": "function(loop-fusion)",
+      "reason": "Loop/memory-traffic hypothesis; measured before selection.",
+      "status": "valid",
+      "search_median_ns": 63672363,
+      "build_ns": 228661426
+    },
+    {
+      "id": "1",
+      "action_ids": [
+        "loop-fusion",
+        "slp-vectorizer"
+      ],
+      "pipeline": "function(loop-fusion),function(slp-vectorizer)",
+      "reason": "Loop/memory-traffic hypothesis; measured before selection.",
+      "status": "valid",
+      "search_median_ns": 65486983,
+      "build_ns": 229193917
+    },
+    {
+      "id": "2",
+      "action_ids": [
+        "licm"
+      ],
+      "pipeline": "function(loop-mssa(licm))",
+      "reason": "One-action probe; feature weight 3.0.",
+      "status": "valid",
+      "search_median_ns": 78917135,
+      "build_ns": 229113151
+    },
+    {
+      "id": "3",
+      "action_ids": [
+        "loop-unroll"
+      ],
+      "pipeline": "function(loop-unroll)",
+      "reason": "One-action probe; feature weight 3.0.",
+      "status": "valid",
+      "search_median_ns": 75013695,
+      "build_ns": 229027022
+    }
+  ],
+  "samples": [
+    {
+      "duration_ns": 200026828,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "reference"
+    },
+    {
+      "duration_ns": 80116277,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "o3-warmup"
+    },
+    {
+      "duration_ns": 64392895,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "candidate-0-check"
+    },
+    {
+      "duration_ns": 70058805,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-0-search-0"
+    },
+    {
+      "duration_ns": 63672363,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-0-search-1"
+    },
+    {
+      "duration_ns": 60965621,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-0-search-2"
+    },
+    {
+      "duration_ns": 65235283,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "candidate-1-check"
+    },
+    {
+      "duration_ns": 66267500,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-1-search-0"
+    },
+    {
+      "duration_ns": 64190986,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-1-search-1"
+    },
+    {
+      "duration_ns": 65486983,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-1-search-2"
+    },
+    {
+      "duration_ns": 82221656,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "candidate-2-check"
+    },
+    {
+      "duration_ns": 78917135,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-2-search-0"
+    },
+    {
+      "duration_ns": 78055475,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-2-search-1"
+    },
+    {
+      "duration_ns": 82874317,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-2-search-2"
+    },
+    {
+      "duration_ns": 96427449,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "correctness",
+      "label": "candidate-3-check"
+    },
+    {
+      "duration_ns": 75013695,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-3-search-0"
+    },
+    {
+      "duration_ns": 74702123,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-3-search-1"
+    },
+    {
+      "duration_ns": 76777493,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "search",
+      "label": "candidate-3-search-2"
+    },
+    {
+      "duration_ns": 80586360,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "o3-round-0",
+      "round": 0,
+      "variant": "o3"
+    },
+    {
+      "duration_ns": 62704453,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "guided-round-0",
+      "round": 0,
+      "variant": "guided"
+    },
+    {
+      "duration_ns": 60693617,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "guided-round-1",
+      "round": 1,
+      "variant": "guided"
+    },
+    {
+      "duration_ns": 77846807,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "o3-round-1",
+      "round": 1,
+      "variant": "o3"
+    },
+    {
+      "duration_ns": 83180580,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "o3-round-2",
+      "round": 2,
+      "variant": "o3"
+    },
+    {
+      "duration_ns": 83669966,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "guided-round-2",
+      "round": 2,
+      "variant": "guided"
+    },
+    {
+      "duration_ns": 62026517,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "guided-round-3",
+      "round": 3,
+      "variant": "guided"
+    },
+    {
+      "duration_ns": 79683838,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "o3-round-3",
+      "round": 3,
+      "variant": "o3"
+    },
+    {
+      "duration_ns": 81678012,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "o3-round-4",
+      "round": 4,
+      "variant": "o3"
+    },
+    {
+      "duration_ns": 62591989,
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_sha256": "869e8150199418a5ff78bef18358e698dcfb133eb829e2b21eb7fe910976e57c",
+      "stdout_bytes": 26,
+      "stdout": "checksum:31c78c6c9789b672\n",
+      "stderr": "",
+      "phase": "confirmation",
+      "label": "guided-round-4",
+      "round": 4,
+      "variant": "guided"
+    }
+  ],
+  "commands": [
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-std=c17",
+        "-fno-lto",
+        "-fPIE",
+        "-march=x86-64",
+        "-O0",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/source.c",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/o0",
+        "-pie"
+      ],
+      "duration_ns": 214879935,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-std=c17",
+        "-fno-lto",
+        "-fPIE",
+        "-march=x86-64",
+        "-O3",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/source.c",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/o3",
+        "-pie"
+      ],
+      "duration_ns": 214845404,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-std=c17",
+        "-fno-lto",
+        "-fPIE",
+        "-march=x86-64",
+        "-O1",
+        "-emit-llvm",
+        "-c",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/source.c",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/seed.bc"
+      ],
+      "duration_ns": 32356266,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/opt",
+        "-verify-each",
+        "-passes=function(loop-fusion)",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/seed.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-0.bc"
+      ],
+      "duration_ns": 15889515,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/llc",
+        "-O3",
+        "-filetype=obj",
+        "-mcpu=x86-64",
+        "-relocation-model=pic",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-0.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-0.o"
+      ],
+      "duration_ns": 15937060,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-pie",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-0.o",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-0"
+      ],
+      "duration_ns": 164478585,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/opt",
+        "-verify-each",
+        "-passes=function(loop-fusion),function(slp-vectorizer)",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/seed.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-1.bc"
+      ],
+      "duration_ns": 16185949,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/llc",
+        "-O3",
+        "-filetype=obj",
+        "-mcpu=x86-64",
+        "-relocation-model=pic",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-1.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-1.o"
+      ],
+      "duration_ns": 16096273,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-pie",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-1.o",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-1"
+      ],
+      "duration_ns": 164555429,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/opt",
+        "-verify-each",
+        "-passes=function(loop-mssa(licm))",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/seed.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-2.bc"
+      ],
+      "duration_ns": 16283227,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/llc",
+        "-O3",
+        "-filetype=obj",
+        "-mcpu=x86-64",
+        "-relocation-model=pic",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-2.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-2.o"
+      ],
+      "duration_ns": 15882567,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-pie",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-2.o",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-2"
+      ],
+      "duration_ns": 164591091,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/opt",
+        "-verify-each",
+        "-passes=function(loop-unroll)",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/seed.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-3.bc"
+      ],
+      "duration_ns": 15928214,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/llc",
+        "-O3",
+        "-filetype=obj",
+        "-mcpu=x86-64",
+        "-relocation-model=pic",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-3.bc",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-3.o"
+      ],
+      "duration_ns": 16038555,
+      "returncode": 0,
+      "timed_out": false
+    },
+    {
+      "args": [
+        "/usr/lib/llvm-21/bin/clang",
+        "-pie",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-3.o",
+        "-o",
+        "/tmp/compiler-five-code-confirm/code-run-sml62bvp/candidate-3"
+      ],
+      "duration_ns": 164703987,
+      "returncode": 0,
+      "timed_out": false
+    }
+  ],
+  "wall_ns": 3499201071,
+  "notice": "Fresh execution timings of this submitted source on these arguments/stdin. Four local candidates, three search samples each, five alternating confirmation rounds. Process startup and I/O are included. Output agreement on this input is not proof of equivalence; this quick observation has no held-out claim. Compilation/search cost is separate from runtime."
+}

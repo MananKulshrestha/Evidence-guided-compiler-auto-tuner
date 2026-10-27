@@ -1,0 +1,72 @@
+[
+  {
+    "file": "01-dot-product.c",
+    "title": "Dot product",
+    "purpose": "Multiply two vectors, materialize the products, then sum them.",
+    "o3_ms": 73.18,
+    "guided_ms": 59.34,
+    "reduction_percent": 18.91,
+    "faster_pairs": 5,
+    "paired_rounds": 5,
+    "pipeline": "function(loop-fusion)",
+    "source_sha256": "73fcc81f743bd426f71646c45062e4fde2f090dfa76cff38d0ef34f686499411",
+    "stdout": "checksum:d3fd8c7a8555e85d\n",
+    "total_seconds": 3.3
+  },
+  {
+    "file": "02-squared-error.c",
+    "title": "Sum of squared errors",
+    "purpose": "Materialize absolute differences, then sum their squares.",
+    "o3_ms": 80.59,
+    "guided_ms": 62.59,
+    "reduction_percent": 22.33,
+    "faster_pairs": 4,
+    "paired_rounds": 5,
+    "pipeline": "function(loop-fusion)",
+    "source_sha256": "819f320d638b08af900af39b5e63242b55c6b3338969fb144f86f90bc1fbc553",
+    "stdout": "checksum:31c78c6c9789b672\n",
+    "total_seconds": 3.5
+  },
+  {
+    "file": "03-thresholded-signal.c",
+    "title": "Thresholded signal accumulation",
+    "purpose": "Combine two channels, then accumulate only values above a threshold.",
+    "o3_ms": 81.44,
+    "guided_ms": 64.38,
+    "reduction_percent": 20.95,
+    "faster_pairs": 5,
+    "paired_rounds": 5,
+    "pipeline": "function(loop-fusion),function(slp-vectorizer)",
+    "source_sha256": "ded2dd6fa972784c394288e28db212cd7c7b9e8b95b02df10b46170e8f093c9d",
+    "stdout": "checksum:8d93869ac57f10ce\n",
+    "total_seconds": 3.4
+  },
+  {
+    "file": "04-signal-energy.c",
+    "title": "Signal energy after gain",
+    "purpose": "Apply a gain and offset to two channels, then calculate the transformed energy.",
+    "o3_ms": 80.89,
+    "guided_ms": 61.52,
+    "reduction_percent": 23.96,
+    "faster_pairs": 5,
+    "paired_rounds": 5,
+    "pipeline": "function(loop-fusion)",
+    "source_sha256": "00f945603a07f661ea31fe89fa7f3dc16686af146e50538eabb54f1e8930ba54",
+    "stdout": "checksum:a7c6cf50a90874af\n",
+    "total_seconds": 3.45
+  },
+  {
+    "file": "05-feature-histogram.c",
+    "title": "Histogram of XOR features",
+    "purpose": "Generate a byte feature from two channels, then count it into 256 histogram bins.",
+    "o3_ms": 83.14,
+    "guided_ms": 68.12,
+    "reduction_percent": 18.06,
+    "faster_pairs": 5,
+    "paired_rounds": 5,
+    "pipeline": "function(loop-fusion),function(slp-vectorizer)",
+    "source_sha256": "49883423f5da271667f2f45f199a391eb1c4dc0103f078104c3c50f947ba4e15",
+    "stdout": "checksum:76c5bb1cd484593f\n",
+    "total_seconds": 3.61
+  }
+]

@@ -88,6 +88,33 @@ def test_report_size_is_stable_after_binary_removal(experiment, tmp_path):
     assert after["baseline_variants"]["o3"]["executable_bytes"] == 6
 
 
+@pytest.mark.parametrize("cached", [False, True])
+def test_build_timings_and_outputs_survive_artifact_removal(experiment, tmp_path, cached):
+    from autotuner.models import Workload
+    from autotuner.toolchain import CommandResult
+    store, request, run_id, runs = experiment
+    binary = tmp_path / "binary"
+    binary.write_bytes(b"123456")
+    manifest = tmp_path / "commands.json"
+    commands = [{"duration_ns": 100, "returncode": 0, "timed_out": False},
+                {"duration_ns": 200, "returncode": 0, "timed_out": False}]
+    manifest.write_text(json.dumps([{"cache_hit": True, "original_build_commands": commands}] if cached else commands))
+    variant = store.create_variant(run_id, None, "o3", binary, manifest, "hash")
+    for index, duration in enumerate([1000, 1100, 1200]):
+        result = CommandResult([], 0, duration, False, "checksum:0000000000000001\n", "", "", "")
+        store.add_sample(run_id, variant, "confirmation_tuning", "tuning", Workload(300, 17, 2),
+                         index, result, result.stdout.strip(), True, round_number=index)
+    before = report.build_report(store, run_id, write_files=False)
+    stats = before["comparisons"]["tuning"]["variants"]["o3"]
+    assert stats["build"]["compiler_ns"] == 300
+    assert stats["build"]["cache_hit"] is cached
+    assert stats["checksums"] == ["checksum:0000000000000001"]
+    assert (stats["sample_count"], stats["min_ns"], stats["max_ns"]) == (3, 1000, 1200)
+    binary.unlink()
+    manifest.unlink()
+    assert report.build_report(store, run_id, write_files=False) == before
+
+
 def test_failed_compile_evidence_is_available_without_variant(experiment):
     store, request, run_id, runs = experiment
     tuning = TuningService(store)
