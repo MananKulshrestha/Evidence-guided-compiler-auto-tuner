@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Evidence-Guided LLVM Pass Tuner</title>
-  <link rel="stylesheet" href="/static/style.css?v=showcase-wins-2">
-  <script src="/static/app.js?v=quick-inspection-2" defer></script>
+  <link rel="stylesheet" href="/static/style.css?v=understand-trials-1">
+  <script src="/static/app.js?v=understand-trials-1" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -105,11 +105,16 @@
         <div id="metrics" class="metric-grid"></div>
         <div id="comparison-panel" class="panel comparison-panel"><div id="comparisons"></div><details><summary>Interpretation and limitations</summary><div id="result-explanation"></div></details></div>
         <div id="charts" class="chart-grid"><div class="panel chart-panel"><h3>Best search runtime</h3><img id="search-chart" alt="Best-so-far runtime by trial"></div><div class="panel chart-panel"><h3>Size versus runtime</h3><img id="pareto-chart" alt="Candidate executable size versus runtime"></div></div>
-        <div class="panel trials-panel"><div class="saved-heading"><div><h3>Candidate evidence trail</h3><p class="muted">Select a trial to inspect its commands, checksum checks, and raw samples.</p></div></div><div class="table-wrap"><table><thead><tr><th>#</th><th>Strategy</th><th>Pass actions</th><th>Status</th><th>Median</th><th>Size</th></tr></thead><tbody id="trial-rows"></tbody></table></div><div id="trial-detail" class="trial-detail" hidden></div></div>
+        <div class="panel trials-panel"><div class="saved-heading"><div><h3>Optimization attempts</h3><p class="muted">Each row is one sequence the compiler tried. Click Understand for a simple explanation, or select the row for technical evidence.</p></div></div><div class="table-wrap"><table><thead><tr><th>Attempt</th><th>Search method</th><th>Optimizations tried (in order)</th><th>Result</th><th>Typical runtime</th><th>Program size</th><th>Help</th></tr></thead><tbody id="trial-rows"></tbody></table></div><div id="trial-detail" class="trial-detail" hidden></div></div>
         <div id="downloads" class="downloads"><a id="summary-link">Summary JSON ↓</a><a id="trials-link">Trials CSV ↓</a><a id="samples-link">Samples CSV ↓</a><a id="environment-link">Environment JSON ↓</a></div>
       </section>
     </main>
     <footer>Local experiment · LLVM 21 · No model-generated performance claims</footer>
   </div>
+  <dialog id="trial-understand" aria-labelledby="trial-understand-title">
+    <form method="dialog"><button class="text-button" aria-label="Close explanation">Close ✕</button></form>
+    <h2 id="trial-understand-title">Understand this attempt</h2>
+    <div id="trial-understand-content"></div>
+  </dialog>
 </body>
 </html>

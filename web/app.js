@@ -310,15 +310,65 @@ function renderResults(report, trials, artifactBase, bundledDetails = null, live
   $("results").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+// Presentation help is local and instant; it does not change stored evidence.
+const passHelp = {
+  "instcombine": ["Simplify calculations", "Instruction combining", "Replaces unnecessarily complicated calculations with simpler ones.", "Before: result = x + 0;\nAfter:  result = x;"],
+  "simplifycfg": ["Simplify branches", "Control-flow simplification", "Cleans up unnecessary decisions and paths through the program.", "Before: if (ready) return x; else return x;\nAfter:  return x;"],
+  "gvn": ["Reuse repeated calculations", "Global value numbering", "Reuses an earlier result when the same calculation is still valid.", "Before: a = x + y; b = x + y;\nAfter:  a = x + y; b = a;"],
+  "dce": ["Remove unused calculations", "Dead code elimination", "Removes calculations whose results are never used, when they have no required side effects.", "Before: unused = x + 1; return x;\nAfter:  return x;"],
+  "licm": ["Move repeated work outside loops", "Loop-invariant code motion", "Moves a calculation outside a loop if its value stays the same and moving it is safe.", "Before: each loop iteration calculates a * b.\nAfter:  calculate a * b once, then reuse it in the loop."],
+  "loop-unroll": ["Do several loop steps together", "Loop unrolling", "Repeats the loop body within one iteration, reducing how often the loop must check and update its counter.", "Before: process one item, then check the loop.\nAfter:  process four items, then check the loop.\nAny leftover items still need handling."],
+  "loop-vectorize": ["Process loop items in parallel", "Loop vectorization", "Uses CPU vector instructions to process several independent loop items at once, when safe and worthwhile.", "Before: add array elements one pair at a time.\nAfter:  one vector operation adds several pairs at once."],
+  "slp-vectorizer": ["Group similar calculations", "Superword-level parallelism (SLP) vectorization", "Packs nearby independent scalar calculations into a vector operation. It does not require a loop.", "Before: four separate, similar additions.\nAfter:  one vector addition processes those four pairs."],
+  "loop-fusion": ["Combine neighboring loops", "Loop fusion", "Joins adjacent loops when their dependencies allow it. This can reuse data sooner and reduce loop overhead.", "Before: one loop fills a temporary array; the next reads it.\nAfter:  one combined loop produces and uses each item, if safe."],
+  "loop-interchange": ["Swap nested loop order", "Loop interchange", "Switches which nested loop runs inside the other, when legal. This can improve how the program accesses memory.", "Before: visit a table column by column.\nAfter:  visit it row by row, if dependencies allow it."]
+};
+const trialResultLabels = {
+  valid: "Passed checks", no_ir_change: "No code change", compiling: "Compiling",
+  proposed: "Waiting", cancelled: "Cancelled", interrupted: "Interrupted",
+  timeout: "Time limit reached", checksum_mismatch: "Wrong output — rejected",
+  execution_failed: "Program failed", compile_failed: "Compilation failed",
+  pass_parse_failed: "Pass could not run", ir_verification_failed: "Invalid compiler code — rejected"
+};
+function understandTrial(trial) {
+  const content = $("trial-understand-content"); content.replaceChildren();
+  $("trial-understand-title").textContent = `Understand attempt ${trial.ordinal} · ${trial.strategy === "guided" ? "Guided search" : "Random search"}`;
+  const add = (parent, tag, text) => { const node = document.createElement(tag); node.textContent = text; parent.append(node); };
+  add(content, "p", trial.strategy === "guided" ? "Guided search chooses sequences using features of the compiler code and earlier results. Depending on this run's settings, selection uses local rules or GPT." : "Random search chooses sequences randomly within the same allowed pass set and candidate budget. It is the comparison method.");
+  add(content, "p", "The compiler tries the steps below in order. These examples explain each idea; they are not a claim that this exact change happened in your program.");
+  const list = document.createElement("ol");
+  for (const id of trial.action_ids) {
+    const item = document.createElement("li"), help = passHelp[id];
+    add(item, "h3", help?.[0] || id);
+    add(item, "p", help?.[2] || "A compiler optimization step. See the technical evidence for its details.");
+    if (help) {
+      add(item, "pre", help[3]);
+      add(item, "small", `Compiler term: ${help[1]} (${id})`);
+    }
+    list.append(item);
+  }
+  content.append(list);
+  add(content, "h3", "What this result means");
+  add(content, "p", trial.status === "valid" ? "This sequence passed the program's output checks and was timed. Passing checks does not mean it ran faster than another version." : trial.status === "no_ir_change" ? "The sequence produced no change in the compiler's intermediate code, so it was not timed as a new version. This is not an incorrect-output failure." : `${trialResultLabels[trial.status] || trial.status.replaceAll("_", " ")}. See the technical evidence for the recorded details.`);
+  add(content, "p", `Typical runtime is the median (middle timing sample): ${ms(trial.search_median_ns)}. A dash means no timing is recorded. Program size is the compiled executable's size, not the number of source lines or instructions.`);
+  add(content, "p", "An optimization may make no change or may make the program slower. Use the measured comparison results to judge speed.");
+  $("trial-understand").showModal();
+}
+
 function renderTrials(trials, bundledDetails, liveId) {
   const body = $("trial-rows"); body.replaceChildren(); $("trial-detail").hidden = true;
   for (const trial of trials) {
     const row = document.createElement("tr");
-    row.tabIndex = 0; row.setAttribute("role", "button"); row.setAttribute("aria-label", `Inspect ${trial.strategy} trial ${trial.ordinal}`);
-    row.addEventListener("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); row.click(); } });
-    for (const value of [trial.ordinal, trial.strategy, trial.action_ids.join(" → "), trial.status, ms(trial.search_median_ns), trial.executable_bytes == null ? "—" : `${trial.executable_bytes.toLocaleString()} B`]) {
+    row.tabIndex = 0; row.setAttribute("aria-label", `Inspect ${trial.strategy} trial ${trial.ordinal}`);
+    row.addEventListener("keydown", (event) => { if (event.target === row && ["Enter", " "].includes(event.key)) { event.preventDefault(); row.click(); } });
+    for (const value of [trial.ordinal, trial.strategy === "guided" ? "Guided search" : trial.strategy === "random" ? "Random search" : trial.strategy, trial.action_ids.map(id => passHelp[id]?.[0] || id).join(" → "), trialResultLabels[trial.status] || trial.status.replaceAll("_", " "), ms(trial.search_median_ns), trial.executable_bytes == null ? "—" : `${trial.executable_bytes.toLocaleString()} B`]) {
       const cell = document.createElement("td"); cell.textContent = String(value); row.append(cell);
     }
+    const helpCell = document.createElement("td"), helpButton = document.createElement("button");
+    helpButton.type = "button"; helpButton.className = "understand-button"; helpButton.textContent = "Understand";
+    helpButton.setAttribute("aria-label", `Understand ${trial.strategy} attempt ${trial.ordinal}`);
+    helpButton.addEventListener("click", event => { event.stopPropagation(); understandTrial(trial); });
+    helpCell.append(helpButton); row.append(helpCell);
     row.addEventListener("click", async () => {
       const version = state.viewVersion, detailVersion = ++state.detailVersion;
       try { const detail = bundledDetails ? bundledDetails[trial.id] : await getJSON(`/v1/experiments/${liveId}/trials/${trial.id}`); if (version !== state.viewVersion || detailVersion !== state.detailVersion) return; $("trial-detail").hidden = false; $("trial-detail").textContent = JSON.stringify(detail, null, 2); }
