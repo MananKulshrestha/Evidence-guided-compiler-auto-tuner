@@ -1,9 +1,4 @@
-/* Dot product
- * Multiply two vectors, materialize the products, then sum them.
- * No program arguments or standard input are needed.
- * This intentionally staged implementation exposes a loop-fusion opportunity.
- * Based on the project's pipeline/dot-product/histogram benchmark patterns.
- */
+
 #include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
