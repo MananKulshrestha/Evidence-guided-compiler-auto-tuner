@@ -35,6 +35,36 @@ async function launch(t, custom = () => false) {
   return page;
 }
 
+test('trial help simplifies labels, opens instantly and preserves technical evidence', async t => {
+  const page = await launch(t);
+  await page.getByRole('button', { name: 'dot · saved full Portable evidence' }).click();
+  const rows = page.locator('#trial-rows tr');
+  await rows.first().waitFor();
+  assert.equal(await rows.count(), bundle.trials.length);
+  assert.equal(await page.locator('#trial-rows button').count(), bundle.trials.length);
+  const row = rows.first();
+  const trial = bundle.trials[0];
+  assert.match(await row.innerText(), /Guided search|Random search/);
+  assert.doesNotMatch(await row.innerText(), /no_ir_change/);
+  await row.getByRole('button', { name: /Understand/ }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.waitFor();
+  assert.match(await dialog.innerText(), /not a claim that this exact change happened/);
+  assert.equal(await dialog.locator('li').count(), trial.action_ids.length);
+  assert.equal(await page.locator('#trial-detail').isVisible(), false);
+  await page.keyboard.press('Escape');
+  assert.equal(await dialog.isVisible(), false);
+  await row.focus(); await page.keyboard.press('Enter');
+  await page.locator('#trial-detail').waitFor();
+  assert.match(await page.locator('#trial-detail').innerText(), /effective_pipeline/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await row.getByRole('button', { name: /Understand/ }).click();
+  await dialog.waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await dialog.getByRole('button', { name: 'Close explanation' }).click();
+  assert.equal(await dialog.isVisible(), false);
+});
+
 test('bundled evidence displays tuning, holdout, controls, and actual settings', async t => {
   const page = await launch(t);
   await page.getByRole('button', { name: 'dot · saved full Portable evidence' }).click();
